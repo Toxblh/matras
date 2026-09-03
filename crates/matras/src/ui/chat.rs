@@ -99,7 +99,7 @@ pub struct ChatView {
     /// how a restored channel came up at the top of its block however loudly
     /// the trace said otherwise. Re-applied the moment the adjustment gains
     /// bounds, which is the first thing that happens after the measure.
-    pending_scroll: Rc<Cell<Option<u32>>>,
+    pending_scroll: Rc<Cell<Option<(u64, u32)>>>,
     /// Bumped by every programmatic scroll. Both of them keep nudging the
     /// adjustment for a few frames after the request, because GtkListView
     /// measures late, so two requests issued in the same frame would spend
@@ -578,9 +578,11 @@ impl ChatView {
                 }
             });
         }
-        let pending_scroll: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
+        let pending_scroll: Rc<Cell<Option<(u64, u32)>>> = Rc::new(Cell::new(None));
+        let scroll_epoch = Rc::new(Cell::new(0u64));
         scroller.vadjustment().connect_changed({
             let pending_scroll = pending_scroll.clone();
+            let scroll_epoch = scroll_epoch.clone();
             let list = message_list.clone();
             move |adj| {
                 if scroll_trace_enabled() {
@@ -598,7 +600,11 @@ impl ChatView {
                 // inside the measure itself, where it is dropped a second
                 // time. On the idle right after it, the list is allocated and
                 // takes it.
-                if let Some(position) = pending_scroll.take() {
+                if let Some(position) = pending_scroll
+                    .take()
+                    .filter(|(epoch, _)| *epoch == scroll_epoch.get())
+                    .map(|(_, position)| position)
+                {
                     let list = list.clone();
                     glib::idle_add_local_once(move || {
                         if scroll_trace_enabled() {
@@ -964,7 +970,7 @@ impl ChatView {
             pinned_to_bottom,
             pagination_armed,
             pending_scroll,
-            scroll_epoch: Rc::new(Cell::new(0)),
+            scroll_epoch,
         }
     }
 
@@ -973,10 +979,13 @@ impl ChatView {
     fn request_scroll(&self, position: u32) {
         self.message_list
             .scroll_to(position, gtk::ListScrollFlags::NONE, None);
-        // Held only while the list has no allocation to scroll within; either
-        // way a later request replaces an earlier one.
+        // Held only while the list has no allocation to scroll within, and
+        // stamped with the request it belongs to: by the time the list is
+        // measured this may have been superseded by a saved anchor, and
+        // re-issuing it then would drag the reader to the bottom the anchor
+        // had just moved them away from.
         self.pending_scroll
-            .set((self.message_list.height() == 0).then_some(position));
+            .set((self.message_list.height() == 0).then(|| (self.scroll_epoch.get(), position)));
     }
 
     /// Claims the feed for a new programmatic scroll, invalidating the one
@@ -1383,15 +1392,15 @@ impl ChatView {
                 "scroll trace"
             );
         }
-        self.request_scroll(position);
-
         let wanted = post_id.to_string();
         let rows = self.visible_posts.clone();
         let Some(adjustment) = self.message_list.vadjustment() else {
             return false;
         };
-        let attempts = Rc::new(Cell::new(0u8));
         let (epoch, epochs) = self.begin_scroll();
+        self.request_scroll(position);
+
+        let attempts = Rc::new(Cell::new(0u8));
         let started = std::time::Instant::now();
         self.message_list.add_tick_callback(move |list, _| {
             if epochs.get() != epoch {
@@ -1464,13 +1473,13 @@ impl ChatView {
                 "scroll trace"
             );
         }
-        self.request_scroll(position);
-
         let Some(adjustment) = self.message_list.vadjustment() else {
             return;
         };
-        let attempts = Rc::new(Cell::new(0u8));
         let (epoch, epochs) = self.begin_scroll();
+        self.request_scroll(position);
+
+        let attempts = Rc::new(Cell::new(0u8));
         let started = std::time::Instant::now();
         self.message_list.add_tick_callback(move |list, _| {
             if epochs.get() != epoch {
