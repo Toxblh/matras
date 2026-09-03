@@ -394,10 +394,36 @@ impl AppState {
         if post.is_reply() {
             // Keep the root's reply counter live, since that is the only
             // affordance leading into the thread.
+            //
+            // Every post comes through here, and the same reply comes through
+            // several times: the optimistic copy the composer draws, the REST
+            // result of that send, the websocket echo of it, a redelivery
+            // after a reconnect, an edit, a permalink or saved-post fetch. So
+            // the counter cannot be a blind `+= 1` — it has to move only for a
+            // reply we have not already counted, and the post itself says
+            // which one it is:
+            //
+            // * a copy we wrote ourselves has `id == pending_post_id`, and the
+            //   server's version of it carries that pending id under a real
+            //   id, which is how the echo is recognised as already counted —
+            //   the same key `ChannelFeed::upsert` retires the copy by;
+            // * the root's `last_reply_at` is the newest reply anyone knows
+            //   of, so a reply not newer than that is one we already hold.
+            let mine = post.id == post.pending_post_id;
+            let echo_of_mine =
+                !mine && !post.pending_post_id.is_empty() && post.user_id == self.me.id;
             if let Some(feed) = self.feeds.get_mut(&post.channel_id) {
                 if let Some(root_post) = feed.posts.iter_mut().find(|p| p.id == root) {
-                    root_post.reply_count += 1;
-                    root_post.last_reply_at = post.create_at;
+                    if mine || (!echo_of_mine && post.create_at > root_post.last_reply_at) {
+                        root_post.reply_count += 1;
+                    }
+                    // An optimistic copy is stamped with our own clock. Letting
+                    // it set the watermark would make every real reply that
+                    // lands within the client's clock skew look like one we
+                    // already have, so only server posts move it.
+                    if !mine {
+                        root_post.last_reply_at = root_post.last_reply_at.max(post.create_at);
+                    }
                 }
             }
             if self.crt_enabled {
@@ -557,6 +583,95 @@ mod tests {
             create_at: at,
             ..Default::default()
         }
+    }
+
+    /// A state holding one channel with one root post that already has
+    /// `replies` replies, the way the server reported it.
+    fn state_with_root(replies: i64) -> AppState {
+        let me = User {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let mut st = AppState::new(
+            Client::new("https://test.invalid").expect("static url"),
+            me,
+            ClientConfig::default(),
+            true,
+        );
+        let mut root = post("root", 100);
+        root.channel_id = "chan".into();
+        root.reply_count = replies;
+        root.last_reply_at = if replies > 0 { 100 } else { 0 };
+        st.feeds
+            .insert("chan".into(), ChannelFeed::from_posts(vec![root]));
+        st
+    }
+
+    fn reply(id: &str, at: Millis, user_id: &str) -> Post {
+        Post {
+            id: id.into(),
+            create_at: at,
+            channel_id: "chan".into(),
+            root_id: "root".into(),
+            user_id: user_id.into(),
+            ..Default::default()
+        }
+    }
+
+    fn counter(st: &AppState) -> i64 {
+        st.feeds["chan"].posts[0].reply_count
+    }
+
+    #[test]
+    fn our_own_reply_counts_once_across_the_optimistic_copy_and_its_echo() {
+        let mut st = state_with_root(7);
+
+        // What the composer draws immediately: id and pending id are the same
+        // locally generated string.
+        let mut optimistic = reply("pending-1", 150, "me");
+        optimistic.pending_post_id = "pending-1".into();
+        st.apply_post(optimistic);
+        assert_eq!(counter(&st), 8, "the footer moves without the round trip");
+
+        // The REST result and the websocket echo are the same post arriving
+        // twice, both carrying the pending id back.
+        let mut confirmed = reply("real-1", 160, "me");
+        confirmed.pending_post_id = "pending-1".into();
+        st.apply_post(confirmed.clone());
+        st.apply_post(confirmed);
+        assert_eq!(counter(&st), 8, "the echo is not a second reply");
+    }
+
+    #[test]
+    fn someone_elses_reply_counts_once_however_often_it_is_delivered() {
+        let mut st = state_with_root(7);
+
+        let theirs = reply("r-1", 150, "lena");
+        st.apply_post(theirs.clone());
+        assert_eq!(counter(&st), 8);
+
+        // A reconnect replays what we already have — same post, same id.
+        st.apply_post(theirs.clone());
+        // As does an edit of it, which arrives as a whole post.
+        let mut edited = theirs;
+        edited.message = "second thoughts".into();
+        st.apply_post(edited);
+        assert_eq!(counter(&st), 8, "redelivery is not a new reply");
+
+        // A genuinely newer one still counts.
+        st.apply_post(reply("r-2", 160, "mikk"));
+        assert_eq!(counter(&st), 9);
+    }
+
+    #[test]
+    fn a_reply_older_than_the_root_knows_about_is_history_not_news() {
+        let mut st = state_with_root(7);
+        st.apply_post(reply("r-old", 50, "sara"));
+        assert_eq!(
+            counter(&st),
+            7,
+            "a permalink or saved-post fetch must not inflate the count"
+        );
     }
 
     #[test]
