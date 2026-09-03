@@ -13,8 +13,8 @@ use gtk::glib;
 use mattermost_api::models::{Millis, Post};
 
 use crate::avatars::Avatars;
-use crate::state::{ChannelFeed, SharedState};
-use crate::ui::chat::post_revision;
+use crate::state::SharedState;
+use crate::ui::chat::{self, post_revision, RenderContext};
 use crate::ui::message::{self, MessageActions, RowOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,8 +42,15 @@ pub struct RightPanel {
     subtitle: gtk::Label,
     stack: gtk::Stack,
 
-    thread_list: gtk::Box,
-    thread_scroller: gtk::ScrolledWindow,
+    thread_items: gtk::gio::ListStore,
+    thread_list: gtk::ListView,
+    thread_context: Rc<RefCell<Option<RenderContext>>>,
+    /// Which thread the model holds, so a redraw can tell itself apart from
+    /// arriving in a different one.
+    showing_thread: RefCell<Option<String>>,
+    /// False while the reader is scrolled up in a thread, so an arriving reply
+    /// does not drag them to the end of it.
+    pinned_to_bottom: Rc<RefCell<bool>>,
     thread_entry: gtk::TextView,
     follow: gtk::ToggleButton,
     /// Set while the toggle is being synced from state, so it does not report
@@ -127,21 +134,70 @@ impl RightPanel {
         header.pack_end(&follow);
 
         // ---- thread page
-        let thread_list = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(2)
-            .margin_top(12)
-            .margin_bottom(12)
-            .margin_start(12)
-            .margin_end(12)
-            .valign(gtk::Align::End)
-            .vexpand(true)
-            .build();
+        let thread_items = gtk::gio::ListStore::new::<glib::BoxedAnyObject>();
+        let thread_context: Rc<RefCell<Option<RenderContext>>> = Rc::new(RefCell::new(None));
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_bind({
+            let thread_context = thread_context.clone();
+            move |_, object| {
+                let list_item = object
+                    .downcast_ref::<gtk::ListItem>()
+                    .expect("factory must receive GtkListItem");
+                let Some(item) = list_item.item().and_downcast::<glib::BoxedAnyObject>() else {
+                    return;
+                };
+                let Some(context) = thread_context.borrow().clone() else {
+                    return;
+                };
+                list_item.set_selectable(false);
+                list_item.set_activatable(false);
+                let child = render_thread_item(&item.borrow::<ThreadItem>(), &context);
+                child.set_hexpand(true);
+                list_item.set_child(Some(&child));
+            }
+        });
+        factory.connect_unbind(|_, object| {
+            object
+                .downcast_ref::<gtk::ListItem>()
+                .expect("factory must receive GtkListItem")
+                .set_child(gtk::Widget::NONE)
+        });
+
+        let selection = gtk::NoSelection::new(Some(thread_items.clone()));
+        let thread_list = gtk::ListView::new(Some(selection), Some(factory));
+        thread_list.add_css_class("message-list");
+        thread_list.set_single_click_activate(false);
+        thread_list.set_tab_behavior(gtk::ListTabBehavior::Item);
+        // Align::End used to bottom-anchor a short thread, but it also caps the
+        // list at its natural height, and a virtual list needs the whole
+        // viewport to work out which rows are visible.
+        thread_list.set_valign(gtk::Align::Fill);
+        thread_list.set_vexpand(true);
+        thread_list.set_hexpand(true);
+        thread_list.set_show_separators(false);
+        thread_list.set_margin_top(12);
+        thread_list.set_margin_bottom(12);
+        thread_list.set_margin_start(12);
+        thread_list.set_margin_end(12);
+
         let thread_scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
+            // It must be the direct child, or the list cannot tell which rows
+            // are off-screen and therefore recyclable.
             .child(&thread_list)
             .build();
+
+        let pinned_to_bottom = Rc::new(RefCell::new(true));
+        {
+            let pinned = pinned_to_bottom.clone();
+            let candidate = Rc::new(Cell::new(false));
+            thread_scroller
+                .vadjustment()
+                .connect_value_changed(move |adj| {
+                    chat::update_live_edge_pin(adj, &pinned, &candidate);
+                });
+        }
 
         let thread_entry = gtk::TextView::builder()
             .wrap_mode(gtk::WrapMode::WordChar)
@@ -285,8 +341,11 @@ impl RightPanel {
             title,
             subtitle,
             stack,
+            thread_items,
             thread_list,
-            thread_scroller,
+            thread_context,
+            showing_thread: RefCell::new(None),
+            pinned_to_bottom,
             thread_entry,
             follow,
             updating_follow,
@@ -307,10 +366,32 @@ impl RightPanel {
     }
 
     pub fn set_mode(&self, mode: PanelMode) {
-        if *self.mode.borrow() != mode {
-            self.drawn.set(None);
-        }
+        // Navigating anywhere — including re-opening the thread already on
+        // screen — is a request to see its newest reply, so the signature and
+        // the remembered thread both go. A redraw caused by an event never
+        // comes through here, which is what keeps the guard below meaningful.
+        self.drawn.set(None);
+        self.showing_thread.borrow_mut().take();
         *self.mode.borrow_mut() = mode;
+    }
+
+    /// Puts the thread at its newest reply because *you* answered. The rule
+    /// that following the live edge is conditional is right for someone else's
+    /// reply and wrong for your own: every client shows you what you just
+    /// sent, wherever you had been reading.
+    ///
+    /// Does nothing unless the panel is showing the thread the reply lands in,
+    /// so answering in the channel composer does not move the panel.
+    pub fn follow_own_reply(&self, post: &Post) {
+        if self.mode() != PanelMode::Thread(post.thread_root().to_string()) {
+            return;
+        }
+        *self.pinned_to_bottom.borrow_mut() = true;
+        chat::scroll_list_to_newest(
+            &self.thread_list,
+            self.thread_items.n_items(),
+            "own-reply-sent",
+        );
     }
 
     /// Whether the panel already shows exactly this. Records the signature on
@@ -503,7 +584,6 @@ impl RightPanel {
         }
 
         self.stack.set_visible_child_name("thread");
-        clear(&self.thread_list);
         self.title.set_text("Thread");
         self.follow.set_visible(true);
         self.subtitle.set_text(&channel_title);
@@ -513,85 +593,122 @@ impl RightPanel {
         // While the replies are in flight, show the root on its own if we
         // already hold it — the reader clicked a message they were looking at,
         // and an empty panel makes the click feel lost.
-        let fallback;
-        let feed = match st.threads.get(root_id) {
-            Some(feed) => feed,
-            None => match st.find_post(root_id) {
-                Some(root) => {
-                    fallback = ChannelFeed {
-                        posts: vec![root.clone()],
-                        ..Default::default()
-                    };
-                    &fallback
-                }
-                None => {
-                    drop(st);
-                    self.thread_list.append(
-                        &adw::StatusPage::builder()
-                            .title("Loading thread…")
-                            .vexpand(true)
-                            .build(),
-                    );
-                    return;
-                }
-            },
+        let posts = match st.threads.get(root_id) {
+            Some(feed) => Some(feed.posts.clone()),
+            None => st.find_post(root_id).map(|root| vec![root.clone()]),
         };
-        // The feed arrives sorted by `create_at` (see `ChannelFeed::from_list`,
-        // which has to sort because the thread endpoint does not). That is
-        // still not enough: two posts can share a millisecond on a busy server,
-        // and then the conversation starts with a reply. So the root goes
-        // first, always.
-        let mut posts = feed.posts.clone();
-        let root_index = posts.iter().position(|p| p.id == root_id);
-        if let Some(index) = root_index {
-            let root = posts.remove(index);
-            posts.insert(0, root);
-        }
-        let reply_count = posts.len().saturating_sub(1) as i64;
         drop(st);
 
-        let mut last_author: Option<String> = None;
-        let mut last_at: Millis = 0;
-
-        for (index, post) in posts.iter().enumerate() {
-            if post.is_deleted() {
-                continue;
+        let items = match posts {
+            None => vec![ThreadItem::Loading],
+            Some(mut posts) => {
+                // The feed arrives sorted by `create_at` (see
+                // `ChannelFeed::from_list`, which has to sort because the
+                // thread endpoint does not). That is still not enough: two
+                // posts can share a millisecond on a busy server, and then the
+                // conversation starts with a reply. So the root goes first,
+                // always.
+                if let Some(index) = posts.iter().position(|p| p.id == root_id) {
+                    let root = posts.remove(index);
+                    posts.insert(0, root);
+                }
+                build_thread_items(&posts, state)
             }
-            // A divider after the root makes the thread readable at a glance,
-            // and it is where Mattermost puts the reply count too.
-            if index == 1 && reply_count > 0 {
-                self.thread_list.append(&message::day_separator(&format!(
-                    "{reply_count} {}",
-                    message::plural(reply_count, "reply", "replies")
-                )));
-                last_author = None;
-            }
+        };
 
-            let author = state.borrow().author_name(post);
-            let grouped = index != 0
-                && last_author.as_deref() == Some(author.as_str())
-                && post.create_at - last_at < message::GROUPING_WINDOW_MS;
-
-            let row = message::build(
-                post,
-                state,
-                avatars,
-                actions,
-                RowOptions {
-                    grouped,
-                    // We are already in the thread.
-                    show_thread_footer: false,
+        // Arriving in a thread starts at its newest reply; a redraw of the one
+        // already on screen must leave the reader where they are.
+        let opening = self.showing_thread.borrow().as_deref() != Some(root_id);
+        if opening {
+            *self.pinned_to_bottom.borrow_mut() = true;
+            *self.showing_thread.borrow_mut() = Some(root_id.to_string());
+        }
+        let spliced = self.replace_thread(items, state, avatars, actions);
+        if (opening || spliced) && *self.pinned_to_bottom.borrow() {
+            chat::scroll_list_to_newest(
+                &self.thread_list,
+                self.thread_items.n_items(),
+                if opening {
+                    "thread-open"
+                } else {
+                    "thread-splice-while-pinned"
                 },
             );
-            self.thread_list.append(&row);
-            last_author = Some(author);
-            last_at = post.create_at;
         }
+    }
 
-        let adjustment = self.thread_scroller.vadjustment();
-        glib::idle_add_local_once(move || {
-            adjustment.set_value(adjustment.upper() - adjustment.page_size());
+    /// Splices in only the rows that actually differ. An arriving reply then
+    /// costs two rows instead of a teardown and rebuild of every row above it,
+    /// and — as in the channel feed — GtkListView keeps its scroll anchor
+    /// across the update. Returns whether anything moved, which doubles as the
+    /// answer to "was this redraw about this thread at all".
+    ///
+    /// The head (the root, then its "N replies" divider) is diffed apart from
+    /// the replies on purpose. That divider's count changes with every reply
+    /// that arrives, so a single common-prefix scan would stop dead on it while
+    /// the common-suffix scan stopped dead on the new last reply — and the one
+    /// window between them is the whole thread. The rebuild this exists to
+    /// avoid, reintroduced by the one row that always changes.
+    fn replace_thread(
+        &self,
+        items: Vec<ThreadItem>,
+        state: &SharedState,
+        avatars: &Avatars,
+        actions: &MessageActions,
+    ) -> bool {
+        *self.thread_context.borrow_mut() = Some(RenderContext {
+            state: state.clone(),
+            avatars: avatars.clone(),
+            actions: actions.clone(),
         });
+
+        let old: Vec<ThreadItem> = (0..self.thread_items.n_items())
+            .filter_map(|position| thread_item(&self.thread_items, position))
+            .collect();
+        let old_head = head_rows(&old);
+        let new_head = head_rows(&items);
+        // Head first, so the replies below it are offset by the head length
+        // this call has just written.
+        let mut moved = self.splice_region(0, &old[..old_head], &items[..new_head]);
+        moved |= self.splice_region(new_head as u32, &old[old_head..], &items[new_head..]);
+        moved
+    }
+
+    /// Replaces the one window of `region` that changed, `offset` rows into the
+    /// model.
+    fn splice_region(&self, offset: u32, old: &[ThreadItem], new: &[ThreadItem]) -> bool {
+        let old_marks: Vec<u64> = old.iter().map(ThreadItem::fingerprint).collect();
+        let new_marks: Vec<u64> = new.iter().map(ThreadItem::fingerprint).collect();
+        let (start, removed, end) = chat::splice_window(&old_marks, &new_marks);
+        if removed == 0 && start == end {
+            return false;
+        }
+        let additions: Vec<glib::BoxedAnyObject> = new[start..end]
+            .iter()
+            .cloned()
+            .map(glib::BoxedAnyObject::new)
+            .collect();
+        if chat::scroll_trace_enabled() {
+            let adjustment = self.thread_list.vadjustment();
+            tracing::info!(
+                target: "matras::scroll",
+                event = "thread-splice",
+                offset,
+                old_rows = old.len(),
+                new_rows = new.len(),
+                prefix = start,
+                removed,
+                added = additions.len(),
+                pinned = *self.pinned_to_bottom.borrow(),
+                value = adjustment.as_ref().map(gtk::Adjustment::value),
+                upper = adjustment.as_ref().map(gtk::Adjustment::upper),
+                page_size = adjustment.as_ref().map(gtk::Adjustment::page_size),
+                "scroll trace"
+            );
+        }
+        self.thread_items
+            .splice(offset + start as u32, removed as u32, &additions);
+        true
     }
 
     fn render_inbox(&self, state: &SharedState, avatars: &Avatars) {
@@ -762,6 +879,126 @@ impl RightPanel {
     pub fn show_threads_tab(&self) {
         self.inbox_stack.set_visible_child_name("threads");
     }
+}
+
+/// One row of a thread, as data. `GtkListView` turns only the visible
+/// screenful into widgets and recycles them while scrolling; the panel used to
+/// build a message widget tree per reply before it drew anything, which at
+/// ~1.6 ms a row is half a second of frozen main thread on a 300-reply thread.
+#[derive(Clone)]
+enum ThreadItem {
+    /// We do not hold the root yet, let alone the replies.
+    Loading,
+    /// The "N replies" divider that separates the root from its replies.
+    Divider(String),
+    Post {
+        post: Rc<Post>,
+        grouped: bool,
+        /// Computed once while the item is built, so diffing compares integers
+        /// instead of re-serialising every post once per comparison.
+        revision: u64,
+    },
+}
+
+impl ThreadItem {
+    fn fingerprint(&self) -> u64 {
+        let mut hash = DefaultHasher::new();
+        match self {
+            ThreadItem::Loading => 0u8.hash(&mut hash),
+            ThreadItem::Divider(text) => {
+                1u8.hash(&mut hash);
+                text.hash(&mut hash);
+            }
+            ThreadItem::Post {
+                post,
+                grouped,
+                revision,
+            } => {
+                2u8.hash(&mut hash);
+                post.id.hash(&mut hash);
+                grouped.hash(&mut hash);
+                revision.hash(&mut hash);
+            }
+        }
+        hash.finish()
+    }
+}
+
+/// How many rows sit above the replies: the root post, and the "N replies"
+/// divider once there is one.
+fn head_rows(items: &[ThreadItem]) -> usize {
+    items
+        .iter()
+        .position(|item| matches!(item, ThreadItem::Divider(_)))
+        .map_or_else(|| items.len().min(1), |at| at + 1)
+}
+
+fn thread_item(store: &gtk::gio::ListStore, position: u32) -> Option<ThreadItem> {
+    store
+        .item(position)?
+        .downcast::<glib::BoxedAnyObject>()
+        .ok()
+        .map(|boxed| boxed.borrow::<ThreadItem>().clone())
+}
+
+fn render_thread_item(item: &ThreadItem, context: &RenderContext) -> gtk::Widget {
+    match item {
+        ThreadItem::Loading => adw::StatusPage::builder()
+            .title("Loading thread…")
+            .vexpand(true)
+            .build()
+            .upcast(),
+        ThreadItem::Divider(text) => message::day_separator(text),
+        ThreadItem::Post { post, grouped, .. } => message::build(
+            post,
+            &context.state,
+            &context.avatars,
+            &context.actions,
+            RowOptions {
+                grouped: *grouped,
+                // We are already in the thread.
+                show_thread_footer: false,
+            },
+        ),
+    }
+}
+
+/// Turns a thread into rows. Author grouping has to be settled here: in a
+/// virtual list there is no neighbouring widget to look at when a row is built,
+/// because the neighbour may not exist yet.
+fn build_thread_items(posts: &[Post], state: &SharedState) -> Vec<ThreadItem> {
+    let reply_count = posts.len().saturating_sub(1) as i64;
+    let mut items = Vec::with_capacity(posts.len() + 1);
+    let mut last_author: Option<String> = None;
+    let mut last_at: Millis = 0;
+
+    for (index, post) in posts.iter().enumerate() {
+        if post.is_deleted() {
+            continue;
+        }
+        // A divider after the root makes the thread readable at a glance, and
+        // it is where Mattermost puts the reply count too.
+        if index == 1 && reply_count > 0 {
+            items.push(ThreadItem::Divider(format!(
+                "{reply_count} {}",
+                message::plural(reply_count, "reply", "replies")
+            )));
+            last_author = None;
+        }
+
+        let author = state.borrow().author_name(post);
+        let grouped = index != 0
+            && last_author.as_deref() == Some(author.as_str())
+            && post.create_at - last_at < message::GROUPING_WINDOW_MS;
+        items.push(ThreadItem::Post {
+            post: Rc::new(post.clone()),
+            grouped,
+            revision: post_revision(post, state),
+        });
+        last_author = Some(author);
+        last_at = post.create_at;
+    }
+    items
 }
 
 fn inbox_row(

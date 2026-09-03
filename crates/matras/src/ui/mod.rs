@@ -5724,6 +5724,7 @@ impl Ui {
         // come through here, so the rule that your own message brings you to
         // the bottom lives here rather than at either call site.
         self.chat.follow_own_post(&optimistic, &self.state);
+        self.right.follow_own_reply(&optimistic);
 
         let ui = self.clone();
         let reply_to = root_id.clone();

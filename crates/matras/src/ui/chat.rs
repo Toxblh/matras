@@ -95,11 +95,13 @@ pub struct ChatView {
     pagination_armed: Rc<Cell<bool>>,
 }
 
+/// Everything needed to turn a data item into a message row. Shared with the
+/// thread panel, which draws the same rows out of the same three things.
 #[derive(Clone)]
-struct RenderContext {
-    state: SharedState,
-    avatars: Avatars,
-    actions: MessageActions,
+pub(super) struct RenderContext {
+    pub(super) state: SharedState,
+    pub(super) avatars: Avatars,
+    pub(super) actions: MessageActions,
 }
 
 /// A cheap data item in the feed. `GtkListView` turns only the visible
@@ -510,28 +512,8 @@ impl ChatView {
             let pagination_armed = pagination_armed.clone();
             scroller.vadjustment().connect_value_changed(move |adj| {
                 let was_pinned = *pinned.borrow();
-                let at_bottom = adj.value() + adj.page_size() >= adj.upper() - 32.0;
-                if !at_bottom {
-                    *pinned.borrow_mut() = false;
-                    pin_candidate.set(false);
-                } else if !was_pinned && !pin_candidate.replace(true) {
-                    // A virtual list can report the exact bottom briefly while
-                    // it re-estimates row heights. Accept it only if it stays
-                    // there, otherwise a transient layout poisons live-edge
-                    // state and the next post yanks history to the bottom.
-                    let adjustment = adj.clone();
-                    let pinned = pinned.clone();
-                    let pin_candidate = pin_candidate.clone();
-                    glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || {
-                        if !pin_candidate.replace(false) {
-                            return;
-                        }
-                        if adjustment.value() + adjustment.page_size() >= adjustment.upper() - 32.0
-                        {
-                            *pinned.borrow_mut() = true;
-                        }
-                    });
-                }
+                let at_bottom = at_live_edge(adj);
+                update_live_edge_pin(adj, &pinned, &pin_candidate);
 
                 if scroll_trace_enabled() {
                     tracing::info!(
@@ -1356,51 +1338,8 @@ impl ChatView {
         true
     }
 
-    /// Puts the feed on its newest row and holds it there while GtkListView
-    /// finishes measuring.
-    ///
-    /// `scroll_to` on its own is not enough for a row spliced in this frame:
-    /// the list has not measured it yet, so it places the target exactly on
-    /// the bottom edge of the viewport, concludes nothing has to move, and by
-    /// the time the row has a height the request is spent. `upper` grew, the
-    /// value did not, and the message sat just below the fold — which is what
-    /// made a message you had only just sent fail to show up. Nudging the
-    /// adjustment over the following frames is the same explicit-navigation
-    /// escape hatch `restore_anchor` already uses; it never moves the feed
-    /// upwards, so a re-measure that shrinks the estimate cannot jump anyone
-    /// into history.
     fn scroll_to_newest(&self, reason: &str) {
-        let position = self.messages.n_items().saturating_sub(1);
-        if scroll_trace_enabled() {
-            tracing::warn!(
-                target: "matras::scroll",
-                event = "programmatic-scroll-to",
-                reason,
-                position,
-                "scroll trace"
-            );
-        }
-        self.message_list
-            .scroll_to(position, gtk::ListScrollFlags::NONE, None);
-
-        let Some(adjustment) = self.message_list.vadjustment() else {
-            return;
-        };
-        let attempts = Rc::new(Cell::new(0u8));
-        self.message_list.add_tick_callback(move |_, _| {
-            attempts.set(attempts.get() + 1);
-            let bottom = (adjustment.upper() - adjustment.page_size()).max(0.0);
-            if adjustment.value() < bottom {
-                adjustment.set_value(bottom);
-            }
-            // Four frames is about one re-measure pass and short enough that
-            // it cannot fight a reader who starts scrolling away.
-            if attempts.get() >= 4 {
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
+        scroll_list_to_newest(&self.message_list, self.messages.n_items(), reason);
     }
 
     /// Whether a post belongs in the feed on screen at all — the question
@@ -1475,29 +1414,12 @@ impl ChatView {
             actions: actions.clone(),
         });
 
-        let old_len = self.messages.n_items() as usize;
-        let old: Vec<FeedItem> = (0..old_len as u32)
+        let old: Vec<u64> = (0..self.messages.n_items())
             .filter_map(|position| model_item(&self.messages, position))
+            .map(|item| item.fingerprint())
             .collect();
-
-        let mut prefix = 0usize;
-        while prefix < old.len()
-            && prefix < items.len()
-            && old[prefix].fingerprint() == items[prefix].fingerprint()
-        {
-            prefix += 1;
-        }
-        let mut suffix = 0usize;
-        while suffix < old.len().saturating_sub(prefix)
-            && suffix < items.len().saturating_sub(prefix)
-            && old[old.len() - 1 - suffix].fingerprint()
-                == items[items.len() - 1 - suffix].fingerprint()
-        {
-            suffix += 1;
-        }
-
-        let removed = old.len().saturating_sub(prefix + suffix);
-        let end = items.len().saturating_sub(suffix);
+        let new: Vec<u64> = items.iter().map(FeedItem::fingerprint).collect();
+        let (prefix, removed, end) = splice_window(&old, &new);
         if removed == 0 && prefix == end {
             return;
         }
@@ -1512,9 +1434,8 @@ impl ChatView {
                 target: "matras::scroll",
                 event = "feed-splice",
                 old_items = old.len(),
-                new_items = items.len(),
+                new_items = new.len(),
                 prefix,
-                suffix,
                 removed,
                 added = additions.len(),
                 value = adjustment.as_ref().map(gtk::Adjustment::value),
@@ -1835,6 +1756,113 @@ impl ChatView {
     }
 }
 
+/// How close to the end still counts as being at the live edge.
+const LIVE_EDGE_SLACK: f64 = 32.0;
+
+pub(super) fn at_live_edge(adjustment: &gtk::Adjustment) -> bool {
+    adjustment.value() + adjustment.page_size() >= adjustment.upper() - LIVE_EDGE_SLACK
+}
+
+/// Folds one adjustment change into `pinned`, the flag that decides whether an
+/// arriving message may move the list.
+///
+/// Leaving the bottom drops the pin at once; arriving at it only counts if it
+/// is still true 80 ms later. A virtual list reports the exact bottom briefly
+/// while it re-estimates row heights, and taking that transient at face value
+/// is what lets the next arriving post yank a reader out of what they were
+/// reading.
+pub(super) fn update_live_edge_pin(
+    adjustment: &gtk::Adjustment,
+    pinned: &Rc<RefCell<bool>>,
+    candidate: &Rc<Cell<bool>>,
+) {
+    if !at_live_edge(adjustment) {
+        *pinned.borrow_mut() = false;
+        candidate.set(false);
+        return;
+    }
+    if *pinned.borrow() || candidate.replace(true) {
+        return;
+    }
+    let adjustment = adjustment.clone();
+    let pinned = pinned.clone();
+    let candidate = candidate.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || {
+        if candidate.replace(false) && at_live_edge(&adjustment) {
+            *pinned.borrow_mut() = true;
+        }
+    });
+}
+
+/// The one window of a list that actually changed, as `(start, removed, end)`:
+/// everything before `start`, and everything from `end` on, has the same
+/// fingerprint in both. Splicing that window instead of replacing the model is
+/// what keeps one appended message from rebuilding every row above it — and,
+/// in a GtkListView, what keeps the scroll anchor alive across the update.
+pub(super) fn splice_window(old: &[u64], new: &[u64]) -> (usize, usize, usize) {
+    let mut prefix = 0usize;
+    while prefix < old.len() && prefix < new.len() && old[prefix] == new[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0usize;
+    while suffix < old.len().saturating_sub(prefix)
+        && suffix < new.len().saturating_sub(prefix)
+        && old[old.len() - 1 - suffix] == new[new.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    (
+        prefix,
+        old.len().saturating_sub(prefix + suffix),
+        new.len().saturating_sub(suffix),
+    )
+}
+
+/// Puts a virtual list on its last row and holds it there while GtkListView
+/// finishes measuring.
+///
+/// `scroll_to` on its own is not enough for a row spliced in this frame: the
+/// list has not measured it yet, so it places the target exactly on the bottom
+/// edge of the viewport, concludes nothing has to move, and by the time the row
+/// has a height the request is spent. `upper` grew, the value did not, and the
+/// message sat just below the fold — which is what made a message you had only
+/// just sent fail to show up. Nudging the adjustment over the following frames
+/// is the same explicit-navigation escape hatch `restore_anchor` already uses;
+/// it never moves the list upwards, so a re-measure that shrinks the estimate
+/// cannot jump anyone into history.
+pub(super) fn scroll_list_to_newest(list: &gtk::ListView, items: u32, reason: &str) {
+    let position = items.saturating_sub(1);
+    if scroll_trace_enabled() {
+        tracing::warn!(
+            target: "matras::scroll",
+            event = "programmatic-scroll-to",
+            reason,
+            position,
+            "scroll trace"
+        );
+    }
+    list.scroll_to(position, gtk::ListScrollFlags::NONE, None);
+
+    let Some(adjustment) = list.vadjustment() else {
+        return;
+    };
+    let attempts = Rc::new(Cell::new(0u8));
+    list.add_tick_callback(move |_, _| {
+        attempts.set(attempts.get() + 1);
+        let bottom = (adjustment.upper() - adjustment.page_size()).max(0.0);
+        if adjustment.value() < bottom {
+            adjustment.set_value(bottom);
+        }
+        // Four frames is about one re-measure pass and short enough that it
+        // cannot fight a reader who starts scrolling away.
+        if attempts.get() >= 4 {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
 struct HashWriter<'a>(&'a mut DefaultHasher);
 
 impl Write for HashWriter<'_> {
@@ -2010,6 +2038,36 @@ mod tests {
             create_at: at,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn an_unchanged_list_splices_nothing() {
+        assert_eq!(splice_window(&[1, 2, 3], &[1, 2, 3]), (3, 0, 3));
+    }
+
+    #[test]
+    fn an_appended_row_splices_only_itself() {
+        assert_eq!(splice_window(&[1, 2, 3], &[1, 2, 3, 4]), (3, 0, 4));
+    }
+
+    #[test]
+    fn a_prepended_row_splices_only_itself() {
+        assert_eq!(splice_window(&[1, 2, 3], &[0, 1, 2, 3]), (0, 0, 1));
+    }
+
+    #[test]
+    fn a_changed_row_replaces_only_itself() {
+        assert_eq!(splice_window(&[1, 2, 3], &[1, 9, 3]), (1, 1, 2));
+    }
+
+    #[test]
+    fn a_removed_row_takes_only_itself_out() {
+        assert_eq!(splice_window(&[1, 2, 3], &[1, 3]), (1, 1, 1));
+    }
+
+    #[test]
+    fn an_emptied_list_removes_everything() {
+        assert_eq!(splice_window(&[1, 2, 3], &[]), (0, 3, 0));
     }
 
     #[test]

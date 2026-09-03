@@ -743,7 +743,7 @@ async fn handle_socket(socket: WebSocket, app: Arc<App>) {
 
 // ────────────────────────────────────────────────────────────── seed & bot
 
-fn seed(app: &App) {
+fn seed(app: &App) -> String {
     // A scrollback long enough to page through. Seven seeded posts fit on one
     // screen, so pagination and scroll-anchor work cannot be exercised without
     // it. `MM_HISTORY=400` is what the profiling runs use.
@@ -776,6 +776,19 @@ fn seed(app: &App) {
         &root_id,
     );
 
+    // The same argument as `MM_HISTORY`, one panel to the right: two replies
+    // fit on one screen, so nothing about the thread panel's virtualisation or
+    // its scroll anchoring can be exercised against them.
+    // `MM_THREAD_REPLIES=300` is what the profiling runs use.
+    let thread_replies: usize = std::env::var("MM_THREAD_REPLIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    for i in 0..thread_replies {
+        let author = [MIKK, LENA, SARA, ME][i % 4];
+        app.add_post(DEV, author, &format!("Thread reply {}", i + 1), &root_id);
+    }
+
     app.add_post(
         DEV,
         LENA,
@@ -800,10 +813,15 @@ fn seed(app: &App) {
         });
         apply_reaction(app, &root_id, &reaction, true);
     }
+    root_id
 }
 
 /// Posts every few seconds so live updates are visible with one client open.
-async fn colleague(app: Arc<App>) {
+///
+/// One of the lines lands in the seeded thread rather than in its channel:
+/// whether the thread panel drags a reader to the end when a reply arrives can
+/// only be seen with a reply actually arriving into an open thread.
+async fn colleague(app: Arc<App>, thread_root: String) {
     let lines = [
         (LENA, DEV, "Rebased onto the reconnect branch.", ""),
         (
@@ -811,6 +829,12 @@ async fn colleague(app: Arc<App>) {
             DEV,
             "@anton can you look at the ICE buffering patch?",
             "",
+        ),
+        (
+            MIKK,
+            DEV,
+            "Confirmed against the track-id path as well.",
+            thread_root.as_str(),
         ),
         (
             SARA,
@@ -857,8 +881,8 @@ async fn main() {
         seq: AtomicI64::new(0),
         conn: AtomicI64::new(1),
     });
-    seed(&app);
-    tokio::spawn(colleague(app.clone()));
+    let thread_root = seed(&app);
+    tokio::spawn(colleague(app.clone(), thread_root));
 
     let api = Router::new()
         .route("/users/login", post(login))
