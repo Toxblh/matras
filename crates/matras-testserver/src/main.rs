@@ -12,7 +12,12 @@
 //! ```
 //!
 //! Log in with any username and password. A background "colleague" posts every
-//! few seconds so live updates are visible without a second client.
+//! few seconds so live updates are visible without a second client, and every
+//! fifth of those goes into the seeded thread.
+//!
+//! Seeding and behaviour come from the environment: `MM_HISTORY`,
+//! `MM_CHANNELS`, `MM_THREAD_REPLIES`, `MM_BOT_SECONDS`, `MM_TESTSERVER_ADDR`,
+//! and `MM_DUPLICATE_POSTS=1` to send every `posted` event twice.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -38,6 +43,8 @@ const TEAM: &str = "tttttttttttttttttttttttcor";
 const GENERAL: &str = "cccccccccccccccccccccgener";
 const DEV: &str = "ccccccccccccccccccccccdeve";
 const DM_LENA: &str = "cccccccccccccccccccccdmlen";
+/// Stands in for the seeded thread's root id in the colleague bot's script.
+const THREAD: &str = "<thread>";
 
 fn now() -> i64 {
     SystemTime::now()
@@ -67,6 +74,9 @@ struct Post {
 struct Db {
     posts: Vec<Post>,
     next_id: i64,
+    /// The seeded thread's root, so the colleague bot can answer in it. Its id
+    /// is generated, so it cannot be written into the bot's script.
+    thread_root: String,
 }
 
 struct App {
@@ -157,6 +167,16 @@ impl App {
     }
 
     fn post_channel_event(&self, post: &Value, mentions: Vec<&str>) {
+        // A resuming client is replayed events it may already have applied, so
+        // the same post really does arrive twice. `MM_DUPLICATE_POSTS=1` makes
+        // that the normal case instead of a race that has to be won.
+        if std::env::var("MM_DUPLICATE_POSTS").as_deref() == Ok("1") {
+            self.emit_channel_event(post, &mentions);
+        }
+        self.emit_channel_event(post, &mentions);
+    }
+
+    fn emit_channel_event(&self, post: &Value, mentions: &[&str]) {
         let channel_id = post["channel_id"].as_str().unwrap_or_default().to_string();
         let user_id = post["user_id"].as_str().unwrap_or_default();
         self.emit(
@@ -170,7 +190,7 @@ impl App {
                 "sender_name": username(user_id),
                 "team_id": TEAM,
                 "set_online": true,
-                "mentions": serde_json::to_string(&mentions).unwrap(),
+                "mentions": serde_json::to_string(mentions).unwrap(),
             }),
             json!({ "channel_id": channel_id, "team_id": TEAM }),
         );
@@ -776,6 +796,18 @@ fn seed(app: &App) {
         &root_id,
     );
 
+    // A thread long enough that its counter is worth watching: two replies
+    // cannot tell a count that moved by one from a count that moved by two.
+    let replies: usize = std::env::var("MM_THREAD_REPLIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    for i in 0..replies {
+        let author = [LENA, MIKK, SARA][i % 3];
+        app.add_post(DEV, author, &format!("Seeded reply {}", i + 1), &root_id);
+    }
+    app.db.lock().unwrap().thread_root = root_id.clone();
+
     app.add_post(
         DEV,
         LENA,
@@ -819,6 +851,9 @@ async fn colleague(app: Arc<App>) {
             "",
         ),
         (LENA, DM_LENA, "It did — thanks.", ""),
+        // Answers in the seeded thread, whose root id is only known at run
+        // time — hence the placeholder.
+        (SARA, DEV, "One more thought on that thread.", THREAD),
     ];
     let mut i = 0usize;
     loop {
@@ -830,15 +865,21 @@ async fn colleague(app: Arc<App>) {
             .unwrap_or(12);
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
         let (user_id, channel_id, message, root) = lines[i % lines.len()];
+        let root = match root {
+            THREAD => app.db.lock().unwrap().thread_root.clone(),
+            other => other.to_string(),
+        };
         // With generated channels present, spread the noise across them: the
         // sidebar's redraw cost is per row, and it only shows when the badges
         // move around a long list rather than in the same three places.
+        // A reply is the exception: it belongs to its root's channel.
         let channel_id = match filler_count() {
+            _ if !root.is_empty() => channel_id.to_string(),
             0 => channel_id.to_string(),
             n => filler_id(i % n),
         };
         i += 1;
-        let post = app.add_post(&channel_id, user_id, message, root);
+        let post = app.add_post(&channel_id, user_id, message, &root);
         let mentions = if message.contains("@anton") {
             vec![ME]
         } else {
