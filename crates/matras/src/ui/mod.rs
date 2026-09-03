@@ -5290,7 +5290,14 @@ impl Ui {
 
     fn select_channel(self: &Rc<Self>, channel_id: String) {
         self.split.set_show_content(true);
-        self.capture_scroll_anchor();
+        let already_open = self.state.borrow().current_channel.as_deref() == Some(&channel_id);
+        // Nothing is being left when the same channel is asked for a second
+        // time, and where the restore has got to so far is not where the
+        // reader was: capturing it here overwrote the saved anchor with the
+        // bottom of the cached block, moments before it was to be put back.
+        if !already_open {
+            self.capture_scroll_anchor();
+        }
         // Flush the outgoing channel's draft *before* the composer is pointed
         // at a new one, or the text would be filed under the wrong channel.
         self.save_draft();
@@ -5302,9 +5309,7 @@ impl Ui {
             // it, and that selection still has a fetch owed to it — swallowing
             // it here is what left a restored channel showing last session's
             // messages until somebody happened to post.
-            if st.current_channel.as_deref() == Some(channel_id.as_str())
-                && st.feeds.get(&channel_id).is_some_and(|feed| feed.at_latest)
-            {
+            if already_open && st.feeds.get(&channel_id).is_some_and(|feed| feed.at_latest) {
                 return;
             }
             st.current_channel = Some(channel_id.clone());
