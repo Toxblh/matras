@@ -260,6 +260,23 @@ mod tests {
         assert_eq!(select_channel(&channels, &members, None).unwrap().id, "c2");
     }
 
+    /// The channel the reader had open outranks the one a first visit would
+    /// get. The UI passes its saved pointer here; when it passed `None`
+    /// instead, every launch opened town-square and the restore that followed
+    /// found the seat taken and dropped what it had loaded.
+    #[test]
+    fn channel_selection_prefers_where_we_were_over_town_square() {
+        let channels = vec![
+            chan("c1", "aaa", "AAA"),
+            chan("c2", "town-square", "Town Square"),
+        ];
+        let members = vec![member("c1"), member("c2")];
+        assert_eq!(
+            select_channel(&channels, &members, Some("c1")).unwrap().id,
+            "c1"
+        );
+    }
+
     #[test]
     fn channel_selection_ignores_channels_we_are_not_in() {
         let channels = vec![chan("c1", "aaa", "AAA")];

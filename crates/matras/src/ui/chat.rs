@@ -93,6 +93,20 @@ pub struct ChatView {
     /// Edge-trigger for history pagination. A physical approach to the top
     /// produces one request, not one request per high-resolution scroll tick.
     pagination_armed: Rc<Cell<bool>>,
+    /// A programmatic scroll asked for before GtkListView had been measured.
+    /// The list drops such a request — there is no allocation to scroll
+    /// within — and on a cold start every scroll is one of these, which is
+    /// how a restored channel came up at the top of its block however loudly
+    /// the trace said otherwise. Re-applied the moment the adjustment gains
+    /// bounds, which is the first thing that happens after the measure.
+    pending_scroll: Rc<Cell<Option<(u64, u32)>>>,
+    /// Bumped by every programmatic scroll. Both of them keep nudging the
+    /// adjustment for a few frames after the request, because GtkListView
+    /// measures late, so two requests issued in the same frame would spend
+    /// those frames overwriting each other — which is what landing at the
+    /// bottom and then restoring a saved anchor is. The later request wins:
+    /// an earlier one whose number has moved on stops.
+    scroll_epoch: Rc<Cell<u64>>,
 }
 
 /// Everything needed to turn a data item into a message row. Shared with the
@@ -546,16 +560,47 @@ impl ChatView {
                 }
             });
         }
-        scroller.vadjustment().connect_changed(|adj| {
-            if scroll_trace_enabled() {
-                tracing::info!(
-                    target: "matras::scroll",
-                    event = "adjustment-bounds-changed",
-                    value = adj.value(),
-                    upper = adj.upper(),
-                    page_size = adj.page_size(),
-                    "scroll trace"
-                );
+        let pending_scroll: Rc<Cell<Option<(u64, u32)>>> = Rc::new(Cell::new(None));
+        let scroll_epoch = Rc::new(Cell::new(0u64));
+        scroller.vadjustment().connect_changed({
+            let pending_scroll = pending_scroll.clone();
+            let scroll_epoch = scroll_epoch.clone();
+            let list = message_list.clone();
+            move |adj| {
+                if scroll_trace_enabled() {
+                    tracing::info!(
+                        target: "matras::scroll",
+                        event = "adjustment-bounds-changed",
+                        value = adj.value(),
+                        upper = adj.upper(),
+                        page_size = adj.page_size(),
+                        "scroll trace"
+                    );
+                }
+                // The list has just been measured, so a request it dropped
+                // for want of an allocation can be made again — but not from
+                // inside the measure itself, where it is dropped a second
+                // time. On the idle right after it, the list is allocated and
+                // takes it.
+                if let Some(position) = pending_scroll
+                    .take()
+                    .filter(|(epoch, _)| *epoch == scroll_epoch.get())
+                    .map(|(_, position)| position)
+                {
+                    let list = list.clone();
+                    glib::idle_add_local_once(move || {
+                        if scroll_trace_enabled() {
+                            tracing::warn!(
+                                target: "matras::scroll",
+                                event = "programmatic-scroll-to",
+                                reason = "deferred-until-measured",
+                                position,
+                                "scroll trace"
+                            );
+                        }
+                        list.scroll_to(position, gtk::ListScrollFlags::NONE, None);
+                    });
+                }
             }
         });
 
@@ -906,7 +951,31 @@ impl ChatView {
             connection,
             pinned_to_bottom,
             pagination_armed,
+            pending_scroll,
+            scroll_epoch,
         }
+    }
+
+    /// Asks the list for a position, remembering the request when the list is
+    /// not in a state to act on it.
+    fn request_scroll(&self, position: u32) {
+        self.message_list
+            .scroll_to(position, gtk::ListScrollFlags::NONE, None);
+        // Held only while the list has no allocation to scroll within, and
+        // stamped with the request it belongs to: by the time the list is
+        // measured this may have been superseded by a saved anchor, and
+        // re-issuing it then would drag the reader to the bottom the anchor
+        // had just moved them away from.
+        self.pending_scroll
+            .set((self.message_list.height() == 0).then(|| (self.scroll_epoch.get(), position)));
+    }
+
+    /// Claims the feed for a new programmatic scroll, invalidating the one
+    /// before it.
+    fn begin_scroll(&self) -> (u64, Rc<Cell<u64>>) {
+        let epoch = self.scroll_epoch.get().wrapping_add(1);
+        self.scroll_epoch.set(epoch);
+        (epoch, self.scroll_epoch.clone())
     }
 
     /// Marks the first page of a channel as in flight. Only matters while
@@ -1305,16 +1374,35 @@ impl ChatView {
                 "scroll trace"
             );
         }
-        self.message_list
-            .scroll_to(position, gtk::ListScrollFlags::NONE, None);
-
         let wanted = post_id.to_string();
         let rows = self.visible_posts.clone();
         let Some(adjustment) = self.message_list.vadjustment() else {
             return false;
         };
+        let (epoch, epochs) = self.begin_scroll();
+        self.request_scroll(position);
+
         let attempts = Rc::new(Cell::new(0u8));
+        let started = std::time::Instant::now();
         self.message_list.add_tick_callback(move |list, _| {
+            if epochs.get() != epoch {
+                return glib::ControlFlow::Break;
+            }
+            // Nothing can be placed against a list that has not been measured:
+            // every row reports y = 0, 30% of a zero height is the top, and
+            // the restore "succeeds" by parking the feed at the beginning of
+            // the block — the exact position it exists to avoid. Frames spent
+            // waiting for the first allocation do not count against the
+            // budget either; a cold window can tick a hundred times before it
+            // has a size, which used to exhaust the budget before there was
+            // anything to scroll within. Time-bounded rather than
+            // frame-bounded, so a window that never gets one stops asking.
+            if list.height() == 0 {
+                return match started.elapsed() < std::time::Duration::from_secs(2) {
+                    true => glib::ControlFlow::Continue,
+                    false => glib::ControlFlow::Break,
+                };
+            }
             attempts.set(attempts.get() + 1);
             let widget = rows
                 .borrow()
@@ -1329,6 +1417,11 @@ impl ChatView {
                     return glib::ControlFlow::Break;
                 }
             }
+            // The row is not realised, so the scroll has not happened: the
+            // request was made in the same frame as the splice that brought
+            // the posts in, and the list had no allocation to act on. Ask
+            // again now that it has one.
+            list.scroll_to(position, gtk::ListScrollFlags::NONE, None);
             if attempts.get() >= 8 {
                 glib::ControlFlow::Break
             } else {
@@ -1339,7 +1432,50 @@ impl ChatView {
     }
 
     fn scroll_to_newest(&self, reason: &str) {
-        scroll_list_to_newest(&self.message_list, self.messages.n_items(), reason);
+        let position = self.messages.n_items().saturating_sub(1);
+        if scroll_trace_enabled() {
+            tracing::warn!(
+                target: "matras::scroll",
+                event = "programmatic-scroll-to",
+                reason,
+                position,
+                "scroll trace"
+            );
+        }
+        let Some(adjustment) = self.message_list.vadjustment() else {
+            return;
+        };
+        let (epoch, epochs) = self.begin_scroll();
+        self.request_scroll(position);
+
+        let attempts = Rc::new(Cell::new(0u8));
+        let started = std::time::Instant::now();
+        self.message_list.add_tick_callback(move |list, _| {
+            if epochs.get() != epoch {
+                return glib::ControlFlow::Break;
+            }
+            // Same reason as the anchor restore: before the first allocation
+            // the bottom is zero and every frame spent here is a frame of the
+            // budget wasted on a list that cannot move yet.
+            if list.height() == 0 {
+                return match started.elapsed() < std::time::Duration::from_secs(2) {
+                    true => glib::ControlFlow::Continue,
+                    false => glib::ControlFlow::Break,
+                };
+            }
+            attempts.set(attempts.get() + 1);
+            let bottom = (adjustment.upper() - adjustment.page_size()).max(0.0);
+            if adjustment.value() < bottom {
+                adjustment.set_value(bottom);
+            }
+            // Four frames is about one re-measure pass and short enough that
+            // it cannot fight a reader who starts scrolling away.
+            if attempts.get() >= 4 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     /// Whether a post belongs in the feed on screen at all — the question
@@ -1741,16 +1877,22 @@ impl ChatView {
         }
         self.replace_feed(items, state, avatars, actions);
 
-        // Scrolling to the bottom only makes sense when the bottom is the
-        // newest message; in a history block it would jump into the past.
-        if at_latest && *self.pinned_to_bottom.borrow() {
+        // Two different questions, which used to share one answer. *Following*
+        // the feed as messages arrive is only right when the block runs to the
+        // newest message, or a reader parked in history would be dragged
+        // forward. *Arriving* in a channel is not following: the reader has
+        // asked for it, and the end of what is loaded is the closest thing to
+        // now that exists, whereas the top of the block is 60 messages of last
+        // session's cache ago. A saved anchor overrides this — the caller
+        // restores it right after this returns, and the later scroll wins.
+        if (at_latest || !same_channel) && *self.pinned_to_bottom.borrow() {
             // GtkListView owns deferred measurement of its virtual rows. Its
             // position API can target an item before layout; adjustment.upper
             // cannot and left a freshly-opened channel at its oldest message.
-            self.scroll_to_newest(if same_channel {
-                "same-channel-refresh-while-pinned"
-            } else {
-                "channel-open-at-latest"
+            self.scroll_to_newest(match (same_channel, at_latest) {
+                (true, _) => "same-channel-refresh-while-pinned",
+                (false, true) => "channel-open-at-latest",
+                (false, false) => "channel-open-at-end-of-block",
             });
         }
     }
