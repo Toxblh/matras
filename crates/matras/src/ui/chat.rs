@@ -93,6 +93,13 @@ pub struct ChatView {
     /// Edge-trigger for history pagination. A physical approach to the top
     /// produces one request, not one request per high-resolution scroll tick.
     pagination_armed: Rc<Cell<bool>>,
+    /// Bumped by every programmatic scroll. Both of them keep nudging the
+    /// adjustment for a few frames after the request, because GtkListView
+    /// measures late, so two requests issued in the same frame would spend
+    /// those frames overwriting each other — which is what landing at the
+    /// bottom and then restoring a saved anchor is. The later request wins:
+    /// an earlier one whose number has moved on stops.
+    scroll_epoch: Rc<Cell<u64>>,
 }
 
 #[derive(Clone)]
@@ -924,7 +931,16 @@ impl ChatView {
             connection,
             pinned_to_bottom,
             pagination_armed,
+            scroll_epoch: Rc::new(Cell::new(0)),
         }
+    }
+
+    /// Claims the feed for a new programmatic scroll, invalidating the one
+    /// before it.
+    fn begin_scroll(&self) -> (u64, Rc<Cell<u64>>) {
+        let epoch = self.scroll_epoch.get().wrapping_add(1);
+        self.scroll_epoch.set(epoch);
+        (epoch, self.scroll_epoch.clone())
     }
 
     /// Marks the first page of a channel as in flight. Only matters while
@@ -1332,7 +1348,11 @@ impl ChatView {
             return false;
         };
         let attempts = Rc::new(Cell::new(0u8));
+        let (epoch, epochs) = self.begin_scroll();
         self.message_list.add_tick_callback(move |list, _| {
+            if epochs.get() != epoch {
+                return glib::ControlFlow::Break;
+            }
             attempts.set(attempts.get() + 1);
             let widget = rows
                 .borrow()
@@ -1387,7 +1407,11 @@ impl ChatView {
             return;
         };
         let attempts = Rc::new(Cell::new(0u8));
+        let (epoch, epochs) = self.begin_scroll();
         self.message_list.add_tick_callback(move |_, _| {
+            if epochs.get() != epoch {
+                return glib::ControlFlow::Break;
+            }
             attempts.set(attempts.get() + 1);
             let bottom = (adjustment.upper() - adjustment.page_size()).max(0.0);
             if adjustment.value() < bottom {
@@ -1820,16 +1844,22 @@ impl ChatView {
         }
         self.replace_feed(items, state, avatars, actions);
 
-        // Scrolling to the bottom only makes sense when the bottom is the
-        // newest message; in a history block it would jump into the past.
-        if at_latest && *self.pinned_to_bottom.borrow() {
+        // Two different questions, which used to share one answer. *Following*
+        // the feed as messages arrive is only right when the block runs to the
+        // newest message, or a reader parked in history would be dragged
+        // forward. *Arriving* in a channel is not following: the reader has
+        // asked for it, and the end of what is loaded is the closest thing to
+        // now that exists, whereas the top of the block is 60 messages of last
+        // session's cache ago. A saved anchor overrides this — the caller
+        // restores it right after this returns, and the later scroll wins.
+        if (at_latest || !same_channel) && *self.pinned_to_bottom.borrow() {
             // GtkListView owns deferred measurement of its virtual rows. Its
             // position API can target an item before layout; adjustment.upper
             // cannot and left a freshly-opened channel at its oldest message.
-            self.scroll_to_newest(if same_channel {
-                "same-channel-refresh-while-pinned"
-            } else {
-                "channel-open-at-latest"
+            self.scroll_to_newest(match (same_channel, at_latest) {
+                (true, _) => "same-channel-refresh-while-pinned",
+                (false, true) => "channel-open-at-latest",
+                (false, false) => "channel-open-at-end-of-block",
             });
         }
     }

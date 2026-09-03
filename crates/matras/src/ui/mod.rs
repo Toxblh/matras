@@ -5296,7 +5296,15 @@ impl Ui {
         self.save_draft();
         {
             let mut st = self.state.borrow_mut();
-            if st.current_channel.as_deref() == Some(channel_id.as_str()) {
+            // Asking for the channel already on screen is a no-op only once it
+            // has a feed that runs to the newest message. The cache restore
+            // makes a channel current before the server has said a word about
+            // it, and that selection still has a fetch owed to it — swallowing
+            // it here is what left a restored channel showing last session's
+            // messages until somebody happened to post.
+            if st.current_channel.as_deref() == Some(channel_id.as_str())
+                && st.feeds.get(&channel_id).is_some_and(|feed| feed.at_latest)
+            {
                 return;
             }
             st.current_channel = Some(channel_id.clone());
@@ -5315,7 +5323,11 @@ impl Ui {
             (
                 st.client.clone(),
                 st.crt_enabled,
-                st.feeds.contains_key(&channel_id),
+                // Holding *a* block is not holding the current one. Only a
+                // feed that reaches the newest message spares us the fetch;
+                // one restored from the cache, or left behind by a jump into
+                // history, has to be brought up to date.
+                st.feeds.get(&channel_id).is_some_and(|feed| feed.at_latest),
             )
         };
 
@@ -6873,12 +6885,32 @@ async fn hydrate_authors(
 /// to offer — its account was already proven live — so it passes `None`.
 fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
     let client = ui.state.borrow().client.clone();
+    let pointer = crate::cache::load(client.site_url());
+
+    // Where the reader was sitting in each channel, put back before anything
+    // can open one. Both the store load below and the first `select_channel`
+    // consult these, and either may land first, so they cannot wait on a disk
+    // read the way they used to.
+    if let Some(pointer) = &pointer {
+        ui.state
+            .borrow_mut()
+            .scroll_anchors
+            .clone_from(&pointer.scroll_anchors);
+    }
+    // The channel to open is the one that *was* open. Without this the startup
+    // sequence picks a channel for a first-ever visit — town-square, or the
+    // first one alphabetically — and the restore below then finds the seat
+    // taken and gives up, so the snapshot was read, fetched from, and ignored.
+    // `Bootstrap` re-validates both against current membership and falls back
+    // on its own, so a team or channel we have since left still lands
+    // somewhere sensible.
+    let preferred_team = pointer.as_ref().and_then(|p| p.current_team.clone());
+    let preferred_channel = pointer.as_ref().and_then(|p| p.current_channel.clone());
 
     // Draw last time's picture first. Everything here is replaced the moment
     // the real data lands; it is on screen so that launching the app shows
     // your channels instead of an empty window for the length of a round trip.
     {
-        let pointer = crate::cache::load(client.site_url());
         let server = client.site_url().to_string();
         let ui = ui.clone();
         runtime::spawn(
@@ -6911,7 +6943,6 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                         if st.current_team.is_none() {
                             st.current_team = pointer.current_team.clone();
                         }
-                        st.scroll_anchors.clone_from(&pointer.scroll_anchors);
                     }
                 }
                 ui.refresh_all();
@@ -6951,6 +6982,10 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                                 st.feeds
                                     .entry(channel_id.clone())
                                     .or_insert_with(|| ChannelFeed::from_posts(posts));
+                                // Only when nothing is open yet: the startup
+                                // sequence is asked for this same channel, so
+                                // if it has already answered it owns the
+                                // selection and its fetch is on the way.
                                 if st.current_channel.is_none() {
                                     st.current_channel = Some(channel_id);
                                 }
@@ -6968,7 +7003,13 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
 
     runtime::spawn(
         async move {
-            let boot = Bootstrap::run(&client, None, None, 0).await?;
+            let boot = Bootstrap::run(
+                &client,
+                preferred_team.as_deref(),
+                preferred_channel.as_deref(),
+                0,
+            )
+            .await?;
             // Calls discovery is optional: the plugin may not be installed.
             let calls = mattermost_calls::discover(&client)
                 .await
