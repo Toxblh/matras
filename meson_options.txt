@@ -1,0 +1,2 @@
+option('video', type: 'feature', value: 'disabled',
+  description: 'Camera and screen sharing. Unsupported on Android: GTK ships it with media-gstreamer=disabled, so only "disabled" builds there.')

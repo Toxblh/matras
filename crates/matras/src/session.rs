@@ -33,8 +33,10 @@ fn path() -> PathBuf {
 
 /// What the keyring item is labelled and keyed by. The attributes are the
 /// lookup key, so they have to be stable across versions.
+#[cfg(feature = "secret-service")]
 const LABEL: &str = "Matras session token";
 
+#[cfg(feature = "secret-service")]
 fn attributes() -> std::collections::HashMap<&'static str, &'static str> {
     std::collections::HashMap::from([("application", crate::APP_ID), ("type", "session")])
 }
@@ -42,6 +44,7 @@ fn attributes() -> std::collections::HashMap<&'static str, &'static str> {
 /// The same attributes, narrowed to one server. The server is part of the key
 /// so several accounts can be stored side by side rather than overwriting each
 /// other.
+#[cfg(feature = "secret-service")]
 fn attributes_for(server: &str) -> std::collections::HashMap<&str, &str> {
     std::collections::HashMap::from([
         ("application", crate::APP_ID),
@@ -52,6 +55,7 @@ fn attributes_for(server: &str) -> std::collections::HashMap<&str, &str> {
 
 /// Every stored session, newest last. Used to offer a choice when more than
 /// one server is signed in.
+#[cfg(feature = "secret-service")]
 pub async fn load_all_async() -> Vec<(String, String)> {
     let found = async {
         let keyring = oo7::Keyring::new().await?;
@@ -99,6 +103,7 @@ pub async fn load_all_async() -> Vec<(String, String)> {
 }
 
 /// Forgets one server's session, leaving any others alone.
+#[cfg(feature = "secret-service")]
 pub async fn forget_async(server: &str) {
     let result = async {
         let keyring = oo7::Keyring::new().await?;
@@ -111,6 +116,7 @@ pub async fn forget_async(server: &str) {
 }
 
 /// Stores the session in the keyring, replacing whatever was there.
+#[cfg(feature = "secret-service")]
 pub async fn save_async(server: &str, token: &str) {
     let secret = json!({ "server": server, "token": token }).to_string();
     let result = async {
@@ -128,6 +134,7 @@ pub async fn save_async(server: &str, token: &str) {
 
 /// Forgets the session in both places. Signing out has to clear the fallback
 /// too, or the next launch signs straight back in with it.
+#[cfg(feature = "secret-service")]
 pub async fn clear_async() {
     let result = async {
         let keyring = oo7::Keyring::new().await?;
@@ -137,6 +144,36 @@ pub async fn clear_async() {
     if let Err(e) = result {
         tracing::debug!("could not clear the keyring item: {e}");
     }
+    clear_file();
+}
+
+/// The same four entry points without a Secret Service anywhere in the build:
+/// the app-private file is the storage, not the fallback. On Android that
+/// means `/data/data/<pkg>/`, which the kernel isolates by UID and File-Based
+/// Encryption covers at rest — an acceptable home for a token that can be
+/// revoked server-side (see PORT-PLAN.md 3.4; a hardware-keystore backend can
+/// slot in behind these signatures later).
+#[cfg(not(feature = "secret-service"))]
+pub async fn load_all_async() -> Vec<(String, String)> {
+    load().into_iter().collect()
+}
+
+#[cfg(not(feature = "secret-service"))]
+pub async fn forget_async(server: &str) {
+    // The file holds one session, so forgetting a server only means anything
+    // when it is the one stored.
+    if load().is_some_and(|(stored, _)| stored == server) {
+        clear_file();
+    }
+}
+
+#[cfg(not(feature = "secret-service"))]
+pub async fn save_async(server: &str, token: &str) {
+    save(server, token);
+}
+
+#[cfg(not(feature = "secret-service"))]
+pub async fn clear_async() {
     clear_file();
 }
 

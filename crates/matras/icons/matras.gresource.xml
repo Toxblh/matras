@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/ru/toxblh/Matras/icons">
+    <file>scalable/actions/alarm-symbolic.svg</file>
+    <file>scalable/actions/audio-headphones-symbolic.svg</file>
+    <file>scalable/actions/audio-input-microphone-symbolic.svg</file>
+    <file>scalable/actions/avatar-default-symbolic.svg</file>
+    <file>scalable/actions/bookmark-new-symbolic.svg</file>
+    <file>scalable/actions/call-start-symbolic.svg</file>
+    <file>scalable/actions/call-stop-symbolic.svg</file>
+    <file>scalable/actions/camera-web-symbolic.svg</file>
+    <file>scalable/actions/changes-prevent-symbolic.svg</file>
+    <file>scalable/actions/chat-message-new-symbolic.svg</file>
+    <file>scalable/actions/document-edit-symbolic.svg</file>
+    <file>scalable/actions/document-save-symbolic.svg</file>
+    <file>scalable/actions/document-send-symbolic.svg</file>
+    <file>scalable/actions/edit-copy-symbolic.svg</file>
+    <file>scalable/actions/emblem-important-symbolic.svg</file>
+    <file>scalable/actions/face-smile-symbolic.svg</file>
+    <file>scalable/actions/go-next-symbolic.svg</file>
+    <file>scalable/actions/list-add-symbolic.svg</file>
+    <file>scalable/actions/list-remove-symbolic.svg</file>
+    <file>scalable/actions/mail-attachment-symbolic.svg</file>
+    <file>scalable/actions/mail-reply-sender-symbolic.svg</file>
+    <file>scalable/actions/mail-unread-symbolic.svg</file>
+    <file>scalable/actions/media-playback-start-symbolic.svg</file>
+    <file>scalable/actions/media-record-symbolic.svg</file>
+    <file>scalable/actions/microphone-disabled-symbolic.svg</file>
+    <file>scalable/actions/network-workgroup-symbolic.svg</file>
+    <file>scalable/actions/non-starred-symbolic.svg</file>
+    <file>scalable/actions/object-select-symbolic.svg</file>
+    <file>scalable/actions/open-menu-symbolic.svg</file>
+    <file>scalable/actions/starred-symbolic.svg</file>
+    <file>scalable/actions/system-search-symbolic.svg</file>
+    <file>scalable/actions/system-users-symbolic.svg</file>
+    <file>scalable/actions/user-available-symbolic.svg</file>
+    <file>scalable/actions/user-trash-symbolic.svg</file>
+    <file>scalable/actions/video-display-symbolic.svg</file>
+    <file>scalable/actions/view-fullscreen-symbolic.svg</file>
+    <file>scalable/actions/view-more-symbolic.svg</file>
+    <file>scalable/actions/view-sort-descending-symbolic.svg</file>
+    <file>scalable/actions/window-close-symbolic.svg</file>
+    <file>scalable/apps/ru.toxblh.Matras.svg</file>
+  </gresource>
+</gresources>

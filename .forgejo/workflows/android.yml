@@ -1,0 +1,28 @@
+name: android
+
+on:
+  push:
+    branches: [android, master]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    # Linux amd64 runner with Docker CLI and daemon access; the image uses
+    # Google's linux-x86_64 NDK toolchain even when the output is arm64.
+    runs-on: als-huge
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Build arm64 APK
+        run: sh build-aux/android/ci-build.sh
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: Matras-arm64-v8a-unsigned
+          path: apks/Matras-arm64-v8a-release-unsigned.apk
+          if-no-files-found: error

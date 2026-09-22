@@ -27,10 +27,26 @@ pub struct Snapshot {
     pub scroll_anchors: HashMap<String, String>,
 }
 
+/// A writable cache root.
+///
+/// The GTK Android runtime sets `XDG_DATA_HOME` and `XDG_CONFIG_HOME` but not
+/// `XDG_CACHE_HOME`, so `glib::user_cache_dir()` resolves to an unwritable
+/// `~/.cache` there and every cache write fails with EACCES. The data dir the
+/// runtime *does* set is writable, so cache lives beside it; the desktop keeps
+/// the real XDG cache directory.
+pub(crate) fn cache_root() -> PathBuf {
+    #[cfg(target_os = "android")]
+    {
+        glib::user_data_dir().join("cache")
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        glib::user_cache_dir()
+    }
+}
+
 fn path() -> PathBuf {
-    glib::user_cache_dir()
-        .join(crate::APP_ID)
-        .join("snapshot.json")
+    cache_root().join(crate::APP_ID).join("snapshot.json")
 }
 
 /// Reads the snapshot, if it belongs to this server.

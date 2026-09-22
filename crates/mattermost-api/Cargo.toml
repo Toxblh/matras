@@ -15,7 +15,21 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
-tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "rustls-tls-native-roots", "handshake"] }
 tracing.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 url = "2.5.8"
+
+# The websocket's TLS roots differ per platform. `rustls-native-certs` probes
+# /etc/ssl and friends, none of which exist on Android (its store is
+# /system/etc/security/cacerts) — every handshake would fail with an unhelpful
+# "certificate not verified". The webpki snapshot works there, at the cost of
+# self-hosted servers with a private CA (MM_INSECURE_TLS=1 remains the escape
+# hatch until rustls-platform-verifier ships a Maven artifact).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "rustls-tls-native-roots", "handshake"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots", "handshake"] }
+# Roots for the REST client's TLS on Android (tls::android_rustls_config);
+# reqwest's default rustls-platform-verifier has no working Java shim here.
+webpki-roots = "1"

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ru.toxblh.Matras — application icon
+
+  Concept: «Матрас». The object is a mattress in blue ticking, drawn in the
+  GNOME perspective: the diamond-quilted top plane, a piping cord along its
+  edge, and the darker side border below it as the front profile. A speech
+  bubble tail drops from the bottom-left, and the three tufting buttons —
+  each recessed into the quilt — double as the message / typing dots.
+
+  GNOME HIG 45+: free-standing object on a transparent canvas, no baseplate,
+  bottom on the baseline. Every surface here is straight, so all fills are
+  flat and there are no gradients. No shadow is cast outside the silhouette;
+  the only shading is the dip above each tufting button, lit from straight
+  above.
+
+  Palette: GNOME Adwaita named colours only.
+    Blue 1  #99c1f1  ticking (top plane)
+    Blue 2  #62a0ea  quilt stitching, tufting dip shade
+    Blue 5  #1a5fb4  side border / front profile, tail, tufting buttons
+    Light 3 #deddda  piping cord
+-->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <!-- Diamond quilting. The tile origin is placed so the lattice crossings
+         land exactly on the three tufting buttons. Hairline weight on purpose:
+         it reads as stitching at 128px and fades out at 32px instead of
+         aliasing into a moire. -->
+    <pattern id="quilt" x="16" y="26" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M -4 -4 L 28 28 M -4 28 L 28 -4" fill="none" stroke="#62a0ea" stroke-width="1"/>
+    </pattern>
+    <clipPath id="body-clip">
+      <path d="M 16 68 L 40 88 L 16 102 Z
+               M 30 28 H 98 A 14 14 0 0 1 112 42 V 74 A 14 14 0 0 1 98 88 H 30 A 14 14 0 0 1 16 74 V 42 A 14 14 0 0 1 30 28 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Side border panel (the darker front profile) and the bubble tail: Blue 5 -->
+  <path id="mattress-side"
+        d="M 16 68 L 40 88 L 16 102 Z
+           M 30 28 H 98 A 14 14 0 0 1 112 42 V 74 A 14 14 0 0 1 98 88 H 30 A 14 14 0 0 1 16 74 V 42 A 14 14 0 0 1 30 28 Z"
+        fill="#1a5fb4"/>
+
+  <!-- Quilted top plane: Blue 1 ticking, with the stitching laid over it -->
+  <path id="mattress-top"
+        d="M 16 42 A 14 14 0 0 1 30 28 H 98 A 14 14 0 0 1 112 42 V 74 H 16 Z"
+        fill="#99c1f1"/>
+  <path id="mattress-quilting"
+        d="M 16 42 A 14 14 0 0 1 30 28 H 98 A 14 14 0 0 1 112 42 V 74 H 16 Z"
+        fill="url(#quilt)"/>
+
+  <!-- Piping cord where the top plane meets the side border: Light 3 -->
+  <rect id="piping" x="16" y="74" width="96" height="4" fill="#deddda" clip-path="url(#body-clip)"/>
+
+  <!-- Tufting: each button sits in a dip, so a Blue 2 shade rides above it as
+       a hood. Kept low contrast so that at 32px the hood vanishes and the
+       buttons stay three crisp dots. -->
+  <g id="tufting-dips" fill="#62a0ea">
+    <circle cx="40" cy="46" r="9"/>
+    <circle cx="64" cy="46" r="9"/>
+    <circle cx="88" cy="46" r="9"/>
+  </g>
+  <g id="tufting-buttons" fill="#1a5fb4">
+    <circle cx="40" cy="50" r="5.5"/>
+    <circle cx="64" cy="50" r="5.5"/>
+    <circle cx="88" cy="50" r="5.5"/>
+  </g>
+</svg>

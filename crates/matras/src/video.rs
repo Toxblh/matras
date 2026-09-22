@@ -15,13 +15,18 @@
 //! GStreamer type and hands out plain [`Frame`]s, and only this outer module
 //! touches widgets.
 
+#[cfg(feature = "video")]
 use std::sync::Arc;
 
+#[cfg(feature = "video")]
 use gtk::prelude::*;
+#[cfg(feature = "video")]
 use gtk::{gdk, glib};
+#[cfg(feature = "video")]
 use mattermost_calls::TrackRemote;
 
 /// One decoded picture, in the only form both halves agree on.
+#[cfg(feature = "video")]
 pub struct Frame {
     pub pixels: Vec<u8>,
     pub width: u32,
@@ -29,18 +34,24 @@ pub struct Frame {
     pub stride: usize,
 }
 
+#[cfg(feature = "video")]
 pub use pipe::{pick_screen, VideoSender};
+
+#[cfg(not(feature = "video"))]
+pub use stub::{pick_screen, show_remote, RemoteView, VideoSender};
 
 /// A remote video living in the corner of the window.
 ///
 /// Dropping it takes the picture out of the overlay and stops the decoder,
 /// which is what should happen when the sharer stops or the call ends.
+#[cfg(feature = "video")]
 pub struct RemoteView {
     container: gtk::Box,
     widget: gtk::Widget,
     pipeline: pipe::Receiver,
 }
 
+#[cfg(feature = "video")]
 impl Drop for RemoteView {
     fn drop(&mut self) {
         self.pipeline.stop();
@@ -50,12 +61,17 @@ impl Drop for RemoteView {
 
 /// Picture-in-picture size. Expanded is a size request rather than a fill so
 /// that several shares can be open at once without fighting over the overlay.
+#[cfg(feature = "video")]
 const PIP_WIDTH: i32 = 260;
+#[cfg(feature = "video")]
 const PIP_HEIGHT: i32 = 146;
+#[cfg(feature = "video")]
 const BIG_WIDTH: i32 = 960;
+#[cfg(feature = "video")]
 const BIG_HEIGHT: i32 = 540;
 
 /// Shows a remote track as a thumbnail in `container`, expanding on click.
+#[cfg(feature = "video")]
 pub fn show_remote(
     container: &gtk::Box,
     title: &str,
@@ -126,7 +142,51 @@ pub fn show_remote(
     })
 }
 
+/// What the rest of the client sees when video is compiled out: the same
+/// types and signatures, every constructor answering with an error. Callers
+/// already treat "could not start" as a toast, so a platform without video is
+/// just a platform where starting it never succeeds.
+#[cfg(not(feature = "video"))]
+mod stub {
+    use std::sync::Arc;
+
+    use mattermost_calls::{TrackLocalStaticSample, TrackRemote};
+
+    const UNAVAILABLE: &str = "video is not available in this build";
+
+    pub struct VideoSender(());
+
+    impl VideoSender {
+        pub fn camera(_track: Arc<TrackLocalStaticSample>) -> Result<VideoSender, String> {
+            Err(UNAVAILABLE.into())
+        }
+
+        pub fn screen(
+            _track: Arc<TrackLocalStaticSample>,
+            _node_id: u32,
+            _fd: std::os::fd::OwnedFd,
+        ) -> Result<VideoSender, String> {
+            Err(UNAVAILABLE.into())
+        }
+    }
+
+    pub async fn pick_screen() -> Result<(u32, std::os::fd::OwnedFd), String> {
+        Err(UNAVAILABLE.into())
+    }
+
+    pub struct RemoteView(());
+
+    pub fn show_remote(
+        _container: &gtk::Box,
+        _title: &str,
+        _track: Arc<TrackRemote>,
+    ) -> Result<RemoteView, String> {
+        Err(UNAVAILABLE.into())
+    }
+}
+
 /// Everything that speaks GStreamer.
+#[cfg(feature = "video")]
 mod pipe {
     use std::sync::Arc;
     use std::time::Duration;

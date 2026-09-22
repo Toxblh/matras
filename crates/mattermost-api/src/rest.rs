@@ -76,6 +76,14 @@ impl Client {
         if crate::tls::insecure() {
             tracing::warn!("MM_INSECURE_TLS: certificate verification disabled");
             builder = builder.danger_accept_invalid_certs(true);
+        } else {
+            // On Android the default verifier (rustls-platform-verifier) hangs
+            // with no Java shim present; verify against webpki roots instead.
+            // See tls::android_rustls_config. Desktop keeps reqwest's default.
+            #[cfg(target_os = "android")]
+            {
+                builder = builder.use_preconfigured_tls(crate::tls::android_rustls_config());
+            }
         }
 
         Ok(builder

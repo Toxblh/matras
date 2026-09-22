@@ -7,20 +7,36 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+# Android carries neither the desktop portal stack nor D-Bus, so everything
+# that assumes them sits behind a feature. Desktop builds keep the defaults;
+# Android builds with `--no-default-features`.
+[features]
+default = ["video", "secret-service"]
+# Camera and screen sharing: GStreamer pipelines plus the XDG screencast
+# portal. GTK itself ships Android with media-gstreamer=disabled, so this is
+# the platform's state, not a choice of ours.
+video = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:ashpd"]
+# The Secret Service keyring over D-Bus. Without it the session token lives in
+# the app-private file fallback that session.rs already maintains.
+secret-service = ["dep:oo7"]
+
 [dependencies]
 adw = { version = "0.9.2", package = "libadwaita", features = ["v1_5"] }
-ashpd = "0.12.3"
+ashpd = { version = "0.12.3", optional = true }
 async-channel = "2.5.0"
 cpal = "0.18.2"
 emojis = "0.9.0"
-gstreamer = "0.24.5"
-gstreamer-app = "0.24.5"
-gstreamer-video = "0.24.5"
+gstreamer = { version = "0.24.5", optional = true }
+gstreamer-app = { version = "0.24.5", optional = true }
+gstreamer-video = { version = "0.24.5", optional = true }
 gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
 mattermost-api = { version = "0.1.0", path = "../mattermost-api" }
 mattermost-calls = { version = "0.1.0", path = "../mattermost-calls" }
-oo7 = { version = "0.5.0", default-features = false, features = ["tokio", "native_crypto"] }
-opus = "0.3.1"
+oo7 = { version = "0.5.0", default-features = false, features = ["tokio", "native_crypto"], optional = true }
+# 0.4 rather than 0.3: audiopus_sys drives cmake with no Android handling at
+# all, while opusic-sys reads ANDROID_NDK_HOME and picks the NDK toolchain
+# file itself (see JOURNAL.md).
+opus = "0.4"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde.workspace = true
@@ -29,3 +45,13 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Firing the ACTION_VIEW intent for SSO (ui/browser.rs); the version cpal
+# already brings in transitively.
+jni = "0.22"
+# Routes tracing to logcat (see run()); without it on-device logs are lost.
+tracing-android = "0.2"
+# Publishing the JavaVM + Context so cpal's AAudio backend can reach
+# AudioManager (ui/android_context.rs). Same version cpal already resolves.
+ndk-context = "0.1"

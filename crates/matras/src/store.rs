@@ -17,7 +17,6 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gtk::glib;
 use mattermost_api::models::{Channel, ChannelMember, Post, User};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
@@ -108,14 +107,14 @@ pub struct Store {
 impl Store {
     /// Opens (creating if needed) the database for `server`.
     pub async fn open(server: &str) -> Result<Store, Error> {
-        let dir = glib::user_data_dir().join(crate::APP_ID);
+        let dir = crate::writable_data_dir().join(crate::APP_ID);
         Store::open_at(&dir, &host_of(server)?)
     }
 
     /// Sign-out: delete the database. The next person to use this account
     /// should not find the last one's messages.
     pub async fn clear(server: &str) -> Result<(), Error> {
-        let dir = glib::user_data_dir().join(crate::APP_ID);
+        let dir = crate::writable_data_dir().join(crate::APP_ID);
         remove_at(&dir, &host_of(server)?);
         Ok(())
     }
