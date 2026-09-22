@@ -7,10 +7,11 @@ on:
 
 jobs:
   apk:
-    # Linux amd64 runner with Docker CLI and daemon access; the image uses
-    # Google's linux-x86_64 NDK toolchain even when the output is arm64.
+    # Pixiewood uses Google's linux-x86_64 NDK toolchain to produce arm64 APKs.
     runs-on: als-huge
     timeout-minutes: 240
+    container:
+      image: node:22-bookworm
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -18,7 +19,7 @@ jobs:
           persist-credentials: false
 
       - name: Build arm64 APK
-        run: sh build-aux/android/ci-build.sh
+        run: sh build-aux/android/ci-linux.sh
 
       - name: Upload APK
         uses: actions/upload-artifact@v3
