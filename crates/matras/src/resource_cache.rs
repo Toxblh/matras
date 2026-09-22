@@ -13,8 +13,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gtk::glib;
-
 const MAGIC: &[u8; 8] = b"MMADCHE1";
 const HEADER: usize = MAGIC.len() + 8 + 4;
 
@@ -31,7 +29,7 @@ struct Inner {
 
 impl ResourceCache {
     pub fn open(server: &str) -> Self {
-        let root = glib::user_cache_dir().join(crate::APP_ID).join("http");
+        let root = crate::cache::cache_root().join(crate::APP_ID).join("http");
         let dir = root.join(format!("{:016x}", stable_hash(server)));
         Self::open_paths(root, dir, crate::background::cache_limit_bytes())
     }

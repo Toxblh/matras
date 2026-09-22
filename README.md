@@ -238,6 +238,12 @@ protocol largely are not. `docs/PROTOCOL.md` records what was found by reading
 `mattermost/mattermost`, `mattermost-plugin-calls`, `rtcd` and `calls-common`,
 including several behaviours that fail *silently* if you get them wrong.
 
+## Android APK
+
+The [Android build instructions](build-aux/android/README.md) and
+`.forgejo/workflows/android.yml` build an arm64 APK on pushes to `android` or
+`master`. Forgejo stores the unsigned APK as a workflow artifact.
+
 ## Publishing the flatpak
 
 `.forgejo/workflows/flatpak.yml` builds the manifest in `build-aux/` on every

@@ -151,6 +151,13 @@ impl CallDock {
         let record = icon_button("media-record-symbolic", "Record the call", on_record);
         let hand = icon_button("view-sort-descending-symbolic", "Raise your hand", on_hand);
 
+        // Without the video feature there is nothing behind these two; a
+        // control that can never work is not drawn rather than drawn disabled.
+        #[cfg(not(feature = "video"))]
+        for hidden in [&screen, &camera] {
+            hidden.set_visible(false);
+        }
+
         // A quick reaction, which is how people agree without interrupting.
         let reactions = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)

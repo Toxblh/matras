@@ -9,7 +9,12 @@
 //! to; it is built inline from an `Rc<Ui>` capture instead.
 
 mod account;
+#[cfg(target_os = "android")]
+mod android_context;
+#[cfg(target_os = "android")]
+mod android_permissions;
 mod autocomplete;
+mod browser;
 mod call_dock;
 mod chat;
 mod dialogs;
@@ -417,6 +422,19 @@ pub fn build_window(app: &adw::Application) {
 
     let toast_overlay = adw::ToastOverlay::new();
     window.set_content(Some(&toast_overlay));
+
+    // Ask for the microphone up front, so the first call has audio rather than
+    // failing once to raise the grant dialog. The surface only exists once the
+    // window is on screen, so wait for the map.
+    #[cfg(target_os = "android")]
+    window.connect_map(|window| {
+        if let Some(surface) = window.surface() {
+            // ndk_context first: cpal panics reaching it if it is not set, and
+            // the panic is invisible on Android (stderr → /dev/null).
+            android_context::ensure(&surface);
+            android_permissions::ensure_record_audio(&surface);
+        }
+    });
 
     // A layout-only mode, so the panes can be reviewed without a server.
     if std::env::var_os("MATRAS_DEMO").is_some() {
@@ -5852,6 +5870,7 @@ impl Ui {
         drop(st);
 
         let ui = self.clone();
+        tracing::info!(%channel_id, "joining the call");
         runtime::spawn(
             async move {
                 let opts = JoinOptions {
@@ -5861,17 +5880,35 @@ impl Ui {
                 CallSession::join(&client, ws, opts, &discovery).await
             },
             move |result| match result {
-                Ok(session) => ui.call_joined(session),
-                Err(e) => ui.toast(&format!("Could not join the call: {e}")),
+                Ok(session) => {
+                    tracing::info!("join returned a session; starting audio");
+                    ui.call_joined(session)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not join the call");
+                    ui.toast(&format!("Could not join the call: {e}"))
+                }
             },
         );
     }
 
     /// Starts audio for a freshly joined call and subscribes to its updates.
     fn call_joined(self: &Rc<Self>, session: Arc<CallSession>) {
+        // A late safety net if the up-front init at window map never ran:
+        // ndk_context must be set before cpal touches it, and the mic must be
+        // granted before the capture stream opens.
+        #[cfg(target_os = "android")]
+        if let Some(surface) = self.window.surface() {
+            android_context::ensure(&surface);
+            android_permissions::ensure_record_audio(&surface);
+        }
         let audio = match AudioIo::start(session.clone()) {
-            Ok(audio) => audio,
+            Ok(audio) => {
+                tracing::info!("audio started; the call is live");
+                audio
+            }
             Err(e) => {
+                tracing::warn!(error = %e, "audio failed to start; leaving the call");
                 self.toast(&format!("No audio for this call: {e}"));
                 runtime::spawn(async move { session.leave().await }, |_| {});
                 return;

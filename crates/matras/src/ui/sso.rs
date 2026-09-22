@@ -18,8 +18,10 @@
 //! the official desktop app.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
+use adw::prelude::*;
 use mattermost_api::Client;
 
 use super::login::LoginResult;
@@ -56,8 +58,14 @@ pub fn start(
         client.site_url().trim_end_matches('/'),
     );
 
-    gtk::gio::AppInfo::launch_default_for_uri(&url, None::<&gtk::gio::AppLaunchContext>)
-        .map_err(|e| format!("Could not open a browser: {e}"))?;
+    // Persist before opening the browser: the browser detour can outlive this
+    // process (Android kills it in the background, or the callback cold-starts
+    // a fresh instance, or the person finishes auth in a different browser than
+    // the one we launched). The in-memory Pending below only survives a warm
+    // process; the file is what lets any later instance finish the sign-in.
+    persist_pending(client.site_url(), &client_token);
+
+    super::browser::open(&url)?;
 
     PENDING.with(|p| {
         *p.borrow_mut() = Some(Pending {
@@ -70,43 +78,119 @@ pub fn start(
     Ok(())
 }
 
+/// Where the pending sign-in is persisted across a process restart. Next to
+/// the session file, i.e. app-private.
+fn pending_path() -> PathBuf {
+    gtk::glib::user_config_dir()
+        .join(crate::APP_ID)
+        .join("sso-pending.json")
+}
+
+fn persist_pending(server_url: &str, client_token: &str) {
+    let path = pending_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let json = serde_json::json!({ "server": server_url, "client_token": client_token });
+    if let Err(e) = std::fs::write(&path, json.to_string()) {
+        tracing::warn!(error = %e, "could not persist the pending sign-in");
+    }
+}
+
+/// Reads and removes the persisted pending sign-in, if any.
+fn take_persisted() -> Option<(String, String)> {
+    let path = pending_path();
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let server = v.get("server")?.as_str()?.to_string();
+    let client_token = v.get("client_token")?.as_str()?.to_string();
+    Some((server, client_token))
+}
+
+fn clear_persisted() {
+    let _ = std::fs::remove_file(pending_path());
+}
+
 /// Handles a `mattermost-dev://…` callback. Anything that is not one, or does
 /// not match the sign-in we started, is dropped: this URI arrives from outside
 /// the process and a stray one must not be able to log anybody in.
-pub fn deliver(uri: &str) {
+pub fn deliver(app: &adw::Application, uri: &str) {
     let Some((client_token, server_token)) = parse_callback(uri) else {
         tracing::warn!("ignoring an SSO callback that carried no tokens");
         return;
     };
 
-    let Some(pending) = PENDING.with(|p| p.borrow_mut().take()) else {
-        tracing::warn!("an SSO callback arrived with no sign-in in flight");
-        return;
-    };
-    if pending.client_token != client_token {
-        tracing::warn!("an SSO callback carried a client token we did not issue");
-        (pending.on_error)("That sign-in did not match the one this window started.");
+    // Warm path: this is the same process that started the sign-in, so the
+    // login view's callbacks are still live — use them for inline feedback.
+    if let Some(pending) = PENDING.with(|p| p.borrow_mut().take()) {
+        clear_persisted();
+        if pending.client_token != client_token {
+            tracing::warn!("an SSO callback carried a client token we did not issue");
+            (pending.on_error)("That sign-in did not match the one this window started.");
+            return;
+        }
+        let client = pending.client.clone();
+        let on_success = pending.on_success.clone();
+        let on_error = pending.on_error.clone();
+        runtime::spawn(
+            async move {
+                client
+                    .login_with_desktop_token(&server_token)
+                    .await
+                    .map(|me| (client, me))
+            },
+            move |result| match result {
+                Ok((client, me)) => on_success(LoginResult { client, me }),
+                // A 401 here is a spent or expired desktop token, not a bad
+                // password — `describe` would otherwise say the wrong thing.
+                Err(mattermost_api::Error::Api(app)) if app.status_code == 401 => {
+                    on_error("That sign-in did not complete. Try again.")
+                }
+                Err(e) => on_error(&super::login::describe(&e)),
+            },
+        );
         return;
     }
 
-    let client = pending.client.clone();
-    let on_success = pending.on_success.clone();
-    let on_error = pending.on_error.clone();
+    // Cold path: a fresh process (the callback cold-started us, or we were
+    // killed in the background) with no live callbacks. Complete from the
+    // persisted request: exchange the token with a new client, save the
+    // session, and rebuild the window so it lands in the chat.
+    let Some((server_url, saved_client_token)) = take_persisted() else {
+        tracing::warn!("an SSO callback arrived with no sign-in in flight (memory or disk)");
+        return;
+    };
+    if saved_client_token != client_token {
+        tracing::warn!("an SSO callback carried a client token we did not persist");
+        return;
+    }
+
+    let app = app.clone();
     runtime::spawn(
         async move {
+            let client = Client::new(&server_url).map_err(|e| e.to_string())?;
             client
                 .login_with_desktop_token(&server_token)
                 .await
-                .map(|me| (client, me))
+                .map_err(|e| super::login::describe(&e))?;
+            let server = client.site_url().to_string();
+            let token = client.token().unwrap_or_default();
+            crate::session::save_async(&server, &token).await;
+            Ok::<(), String>(())
         },
         move |result| match result {
-            Ok((client, me)) => on_success(LoginResult { client, me }),
-            // A 401 here is a spent or expired desktop token, not a bad
-            // password — `describe` would otherwise say the wrong thing.
-            Err(mattermost_api::Error::Api(app)) if app.status_code == 401 => {
-                on_error("That sign-in did not complete. Try again.")
+            Ok(()) => {
+                // The saved session is what the rebuilt window reads to restore
+                // straight into the chat rather than the login form.
+                for window in app.windows() {
+                    window.close();
+                }
+                super::build_window(&app);
             }
-            Err(e) => on_error(&super::login::describe(&e)),
+            Err(e) => {
+                tracing::warn!(error = %e, "SSO completion from the persisted request failed")
+            }
         },
     );
 }
