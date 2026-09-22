@@ -160,6 +160,20 @@ if (( ${#sign[@]} )); then
   flatpak build-sign "${sign[@]}" "$repo_dir"
 fi
 
+# build-update-repo leaves an unchanged appstream commit as it is, so one created
+# by an earlier unsigned publish stays unsigned. Clients then reject the whole
+# appstream branch ("GPG verification enabled, but no signatures found"), and
+# software centres show no icon, description or screenshots for the app. Sign
+# any appstream commit that has no signature before the summary is regenerated.
+if (( ${#sign[@]} )); then
+  while read -r ref; do
+    commit=$(ostree rev-parse --repo="$repo_dir" "$ref")
+    [[ -e $repo_dir/objects/${commit:0:2}/${commit:2}.commitmeta ]] && continue
+    ostree gpg-sign --repo="$repo_dir" ${GNUPGHOME:+--gpg-homedir="$GNUPGHOME"} \
+      "$commit" "$FLATPAK_GPG_ID"
+  done < <(ostree refs --repo="$repo_dir" | grep '^appstream')
+fi
+
 flatpak build-update-repo \
   --title=Matras \
   --default-branch="$app_branch" \
