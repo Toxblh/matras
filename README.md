@@ -307,8 +307,12 @@ a bundle also configures the signed branch for later updates. A successful CI
 publish makes the update available; `flatpak update` installs it, while automatic
 installation by GNOME Software or another desktop updater depends on its settings.
 
-Existing installations that still use `toxblh/flatpak` must change their remote
-URL once before that old repository is removed:
+The old `toxblh/flatpak` repository publishes a signed redirect to the new
+branch. Existing installations should learn the new URL on their next
+`flatpak update` while the old repository is still online. To verify the
+migration, run `flatpak remotes --show-details`. If a client does not follow
+the redirect, change its remote URL manually before the old repository is
+removed:
 
 ```sh
 flatpak remote-modify --user --url=https://altlinux.space/toxblh/matras/raw/branch/flatpak matras-origin
@@ -317,7 +321,7 @@ flatpak update --user ru.toxblh.Matras
 
 For a system installation, omit `--user`. The signing key is unchanged.
 The old `FLATPAK_REPO_SSH_KEY_B64` and `FLATPAK_REPO_KNOWN_HOSTS` secrets are
-no longer used by this workflow.
+used by the one-time redirect workflow to publish into `toxblh/flatpak`.
 
 The same script builds locally, into `.flatpak-repo`:
 
