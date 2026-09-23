@@ -9,9 +9,21 @@ to the caller. Forgejo runs `ci-linux.sh` inside its Debian job container on
 `als-huge`; the runner does not expose a Docker CLI to jobs. Both paths use
 the same Android SDK and NDK.
 
-The APK is unsigned. To install or distribute it, sign it with a private
-keystore using Android SDK `apksigner`. Do not commit a keystore. The build
-currently targets Android arm64, with minSdk 31 and compileSdk 36.
+Without signing secrets, Forgejo uploads an unsigned APK. To also upload an
+installable signed APK, add these repository Actions secrets at
+`Settings → Actions → Secrets`:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_B64` | Base64 of a PKCS#12 signing keystore, on one line |
+| `ANDROID_KEYSTORE_PASSWORD` | The keystore password |
+| `ANDROID_KEY_ALIAS` | The signing key alias inside the keystore |
+
+Generate the base64 value on macOS with
+`base64 < /path/to/keystore.p12 | tr -d '\n' | pbcopy`. Never commit the
+keystore or paste its contents into an issue. Android uses the signing key to
+authorize app updates, so keep a backup and use the same key for later builds.
+The build targets Android arm64, with minSdk 31 and compileSdk 36.
 
 For a container that already has the toolchain, run
 `make -f build-aux/android/android.mk android release=1` from the repo root.

@@ -20,10 +20,14 @@ jobs:
 
       - name: Build arm64 APK
         run: sh build-aux/android/ci-linux.sh
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
 
-      - name: Upload APK
+      - name: Upload APKs
         uses: actions/upload-artifact@v3
         with:
-          name: Matras-arm64-v8a-unsigned
-          path: apks/Matras-arm64-v8a-release-unsigned.apk
+          name: Matras-arm64-v8a
+          path: apks/*.apk
           if-no-files-found: error

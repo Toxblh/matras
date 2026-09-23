@@ -55,3 +55,13 @@ make -f build-aux/android/android.mk android release=1
 mkdir -p apks
 cp .pixiewood/android/app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk \
    apks/Matras-arm64-v8a-release-unsigned.apk
+
+# Signing is enabled when the repository has all three Actions secrets.
+if [ -n "${ANDROID_KEYSTORE_B64:-}${ANDROID_KEYSTORE_PASSWORD:-}${ANDROID_KEY_ALIAS:-}" ]; then
+    : "${ANDROID_KEYSTORE_B64:?missing Android keystore secret}"
+    : "${ANDROID_KEYSTORE_PASSWORD:?missing Android keystore password secret}"
+    : "${ANDROID_KEY_ALIAS:?missing Android key alias secret}"
+    sh build-aux/android/sign-apk.sh \
+        apks/Matras-arm64-v8a-release-unsigned.apk \
+        apks/Matras-arm64-v8a-release-signed.apk
+fi
