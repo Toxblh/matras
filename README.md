@@ -242,7 +242,8 @@ including several behaviours that fail *silently* if you get them wrong.
 
 The [Android build instructions](build-aux/android/README.md) and
 `.forgejo/workflows/android.yml` build an arm64 APK on pushes to `android` or
-`master`. Forgejo stores the unsigned APK as a workflow artifact.
+`master`. Forgejo stores the unsigned APK as a workflow artifact and, when
+signing secrets are configured, also uploads a signed APK.
 
 ## Publishing the flatpak
 

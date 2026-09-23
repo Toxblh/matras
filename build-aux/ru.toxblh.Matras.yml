@@ -60,4 +60,9 @@ modules:
           - .flatpak-build
           - .flatpak-repo
           - .flatpak-state
+          - .pixiewood
+          - .android-tools
+          - .buildconfig
+          - apks
+          - subprojects
           - target
