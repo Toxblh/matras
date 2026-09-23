@@ -12,14 +12,23 @@ server=${FORGEJO_SERVER_URL:-https://altlinux.space}
 auth=(--user "$owner:$PACKAGES_TOKEN")
 
 link_package() {
-    local type=$1 name=$2 status
+    local type=$1 name=$2 version=$3 status linked
     status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
         "${auth[@]}" --request POST \
         "$server/api/v1/packages/$owner/$type/$name/-/link/$repo")
     case $status in
-        2??|409) ;;
-        *) echo "Could not link $type/$name to $repo (HTTP $status)" >&2; return 1 ;;
+        2??) return 0 ;;
+        # Forgejo returns 400 if another architecture already linked this
+        # package. Verify the association before treating that as success.
+        400|409)
+            linked=$(curl --fail --silent --show-error "${auth[@]}" \
+                "$server/api/v1/packages/$owner/$type/$name/$version" | \
+                python3 -c 'import json,sys; print((json.load(sys.stdin).get("repository") or {}).get("full_name", ""))')
+            [[ $linked == "$owner/$repo" ]] && return 0
+            ;;
     esac
+    echo "Could not link $type/$name to $repo (HTTP $status)" >&2
+    return 1
 }
 
 case ${1:-} in
@@ -35,7 +44,7 @@ case ${1:-} in
                 "$server/api/packages/$owner/generic/$name/$version/$filename" >/dev/null
             echo "Published $name/$version/$filename"
         done
-        link_package generic "$name"
+        link_package generic "$name" "$version"
         ;;
     alt)
         (( $# >= 2 )) || { echo 'usage: publish-package.sh alt RPM_FILE...' >&2; exit 2; }
@@ -51,7 +60,8 @@ case ${1:-} in
                 "${auth[@]}" --upload-file "$file" \
                 "$server/api/packages/$owner/alt$group_path/upload" >/dev/null
             echo "Published ALT RPM ${file##*/}"
-            link_package alt "$name"
+            version=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$file")
+            link_package alt "$name" "$version"
         done
         ;;
     *) echo 'usage: publish-package.sh {generic NAME VERSION FILE...|alt RPM_FILE...}' >&2; exit 2 ;;
