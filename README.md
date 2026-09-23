@@ -140,7 +140,7 @@ on the ref file adds the remote and installs the app; everything after that is
 an ordinary `flatpak update`:
 
 ```sh
-flatpak install https://altlinux.space/toxblh/flatpak/raw/branch/master/ru.toxblh.Matras.flatpakref
+flatpak install https://altlinux.space/toxblh/matras/raw/branch/flatpak/ru.toxblh.Matras.flatpakref
 ```
 
 The runtime comes from Flathub, so that remote has to exist — the ref file
@@ -272,23 +272,19 @@ kept only as workflow artifacts.
 ## Publishing the flatpak
 
 `.forgejo/workflows/flatpak.yml` builds the manifest in `build-aux/` on every
-push to `master` and force-pushes the resulting ostree repository to
-`toxblh/flatpak` on ALS, where Forgejo's `raw/branch/master` endpoint serves it
-as an ordinary HTTP flatpak remote. There is no static host to keep alive.
+push to `master` and force-pushes the resulting ostree repository to the
+`flatpak` branch of this repository. Forgejo's `raw/branch/flatpak` endpoint
+serves it as an ordinary HTTP flatpak remote. The branch is public so clients
+can fetch updates anonymously. CI pushes with Forgejo's built-in, short-lived
+`FORGEJO_TOKEN`, which can write to this repository; no deploy key is needed.
 
-The repository it pushes to is `toxblh/flatpak`, public, so that Forgejo will
-serve it to anonymous clients. CI authenticates with a write **deploy key** on
-that one repository rather than an account token, and pins the host key.
-
-Five Actions secrets on this repository drive it:
+Three Actions secrets on this repository sign the Flatpak repository:
 
 | Secret | Value |
 |---|---|
 | `FLATPAK_GPG_ID` | fingerprint of the signing key |
 | `FLATPAK_GPG_KEY_B64` | `gpg2 --export-secret-keys <fpr> \| base64 -w0` |
 | `FLATPAK_GPG_PASSPHRASE` | that key's passphrase |
-| `FLATPAK_REPO_SSH_KEY_B64` | the deploy key's private half, base64 |
-| `FLATPAK_REPO_KNOWN_HOSTS` | `ssh-keyscan altlinux.space`, fingerprint-verified |
 
 The signing key never enters a personal keyring: it lives as an exported
 blob beside its passphrase, and every publish — local or CI — imports it into
@@ -305,7 +301,20 @@ no pinentry to prompt with.
 
 The workflow writes `ru.toxblh.Matras.flatpakref` into the published repository
 itself, with the public key embedded, so the install link above always carries
-the key that signed what it points at.
+the key that signed what it points at. The `.flatpak` bundles are also uploaded
+to Matras Packages, but Flatpak uses the signed branch for automatic updates.
+
+Existing installations that still use `toxblh/flatpak` must change their remote
+URL once before that old repository is removed:
+
+```sh
+flatpak remote-modify --user --url=https://altlinux.space/toxblh/matras/raw/branch/flatpak matras-origin
+flatpak update --user ru.toxblh.Matras
+```
+
+For a system installation, omit `--user`. The signing key is unchanged.
+The old `FLATPAK_REPO_SSH_KEY_B64` and `FLATPAK_REPO_KNOWN_HOSTS` secrets are
+no longer used by this workflow.
 
 The same script builds locally, into `.flatpak-repo`:
 

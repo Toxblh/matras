@@ -50,8 +50,6 @@ jobs:
           FLATPAK_GPG_ID: ${{ secrets.FLATPAK_GPG_ID }}
           FLATPAK_GPG_KEY_B64: ${{ secrets.FLATPAK_GPG_KEY_B64 }}
           FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
-          FLATPAK_REPO_SSH_KEY_B64: ${{ secrets.FLATPAK_REPO_SSH_KEY_B64 }}
-          FLATPAK_REPO_KNOWN_HOSTS: ${{ secrets.FLATPAK_REPO_KNOWN_HOSTS }}
         run: build-aux/publish-flatpak.sh --publish
 
       - name: Publish bundle to Matras Packages
@@ -115,8 +113,6 @@ jobs:
           FLATPAK_GPG_ID: ${{ secrets.FLATPAK_GPG_ID }}
           FLATPAK_GPG_KEY_B64: ${{ secrets.FLATPAK_GPG_KEY_B64 }}
           FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
-          FLATPAK_REPO_SSH_KEY_B64: ${{ secrets.FLATPAK_REPO_SSH_KEY_B64 }}
-          FLATPAK_REPO_KNOWN_HOSTS: ${{ secrets.FLATPAK_REPO_KNOWN_HOSTS }}
         run: build-aux/publish-flatpak.sh --publish
 
       - name: Publish bundle to Matras Packages
