@@ -245,6 +245,30 @@ The [Android build instructions](build-aux/android/README.md) and
 `master`. Forgejo stores the unsigned APK as a workflow artifact and, when
 signing secrets are configured, also uploads a signed APK.
 
+## Forgejo Packages
+
+The CI workflows publish downloads to the [Matras Packages tab](https://altlinux.space/toxblh/matras/packages):
+
+- Signed Android arm64 APK: Generic package `matras-apk`.
+- x86_64 and aarch64 Flatpak bundles: Generic package `matras-flatpak`.
+- ALT Sisyphus and p11 RPMs: ALT package `matras`, in separate `sisyphus` and
+  `p11` groups. The RPM source is [matras.spec](matras.spec); its locked Rust
+  dependencies are vendored by CI before the isolated Gear build.
+
+Forgejo packages belong to the `toxblh` account. After each upload,
+`build-aux/publish-package.sh` links the package to this repository so that it
+appears on the Matras Packages tab. The Flatpak bundles are snapshots; install
+from the `.flatpakref` above for automatic updates.
+
+To enable publishing, create a personal access token in
+[Forgejo Settings → Applications](https://altlinux.space/user/settings/applications)
+with `write:package` scope and **Public only** access. Save it as the
+`PACKAGES_TOKEN` secret in [Matras Actions settings](https://altlinux.space/toxblh/matras/settings/actions/secrets).
+Without this secret, CI still builds and uploads workflow artifacts but skips
+Packages. Publishing the Android APK also requires the signing secrets listed
+in [the Android instructions](build-aux/android/README.md); unsigned APKs are
+kept only as workflow artifacts.
+
 ## Publishing the flatpak
 
 `.forgejo/workflows/flatpak.yml` builds the manifest in `build-aux/` on every

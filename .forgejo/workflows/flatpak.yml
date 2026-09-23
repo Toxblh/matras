@@ -54,6 +54,22 @@ jobs:
           FLATPAK_REPO_KNOWN_HOSTS: ${{ secrets.FLATPAK_REPO_KNOWN_HOSTS }}
         run: build-aux/publish-flatpak.sh --publish
 
+      - name: Publish bundle to Matras Packages
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$PACKAGES_TOKEN" ]; then
+            echo 'Skipping Packages upload: add the PACKAGES_TOKEN secret'
+            exit 0
+          fi
+          arch=$(flatpak --default-arch)
+          bundle="Matras-$arch.flatpak"
+          flatpak build-bundle --arch="$arch" \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            .flatpak-repo "$bundle" ru.toxblh.Matras stable
+          version="g${GITHUB_SHA:0:12}-r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
+          build-aux/publish-package.sh generic matras-flatpak "$version" "$bundle"
+
   publish-aarch64:
     # Not a matrix: both jobs force-push the same ostree repository, so the
     # second has to start from what the first published, and a matrix would
@@ -102,3 +118,19 @@ jobs:
           FLATPAK_REPO_SSH_KEY_B64: ${{ secrets.FLATPAK_REPO_SSH_KEY_B64 }}
           FLATPAK_REPO_KNOWN_HOSTS: ${{ secrets.FLATPAK_REPO_KNOWN_HOSTS }}
         run: build-aux/publish-flatpak.sh --publish
+
+      - name: Publish bundle to Matras Packages
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$PACKAGES_TOKEN" ]; then
+            echo 'Skipping Packages upload: add the PACKAGES_TOKEN secret'
+            exit 0
+          fi
+          arch=$(flatpak --default-arch)
+          bundle="Matras-$arch.flatpak"
+          flatpak build-bundle --arch="$arch" \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            .flatpak-repo "$bundle" ru.toxblh.Matras stable
+          version="g${GITHUB_SHA:0:12}-r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
+          build-aux/publish-package.sh generic matras-flatpak "$version" "$bundle"
