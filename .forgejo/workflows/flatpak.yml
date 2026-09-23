@@ -62,7 +62,15 @@ jobs:
           fi
           arch=$(flatpak --default-arch)
           bundle="Matras-$arch.flatpak"
+          ref=.flatpak-repo/ru.toxblh.Matras.flatpakref
+          repo_url=$(sed -n 's/^Url=//p' "$ref")
+          test -n "$repo_url"
+          public_key=$(mktemp)
+          trap 'rm -f "$public_key"' EXIT
+          sed -n 's/^GPGKey=//p' "$ref" | base64 -d > "$public_key"
+          test -s "$public_key"
           flatpak build-bundle --arch="$arch" \
+            --repo-url="$repo_url" --gpg-keys="$public_key" \
             --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
             .flatpak-repo "$bundle" ru.toxblh.Matras stable
           version="g${GITHUB_SHA:0:12}-r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
@@ -125,7 +133,15 @@ jobs:
           fi
           arch=$(flatpak --default-arch)
           bundle="Matras-$arch.flatpak"
+          ref=.flatpak-repo/ru.toxblh.Matras.flatpakref
+          repo_url=$(sed -n 's/^Url=//p' "$ref")
+          test -n "$repo_url"
+          public_key=$(mktemp)
+          trap 'rm -f "$public_key"' EXIT
+          sed -n 's/^GPGKey=//p' "$ref" | base64 -d > "$public_key"
+          test -s "$public_key"
           flatpak build-bundle --arch="$arch" \
+            --repo-url="$repo_url" --gpg-keys="$public_key" \
             --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
             .flatpak-repo "$bundle" ru.toxblh.Matras stable
           version="g${GITHUB_SHA:0:12}-r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"

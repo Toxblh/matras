@@ -302,7 +302,10 @@ no pinentry to prompt with.
 The workflow writes `ru.toxblh.Matras.flatpakref` into the published repository
 itself, with the public key embedded, so the install link above always carries
 the key that signed what it points at. The `.flatpak` bundles are also uploaded
-to Matras Packages, but Flatpak uses the signed branch for automatic updates.
+to Matras Packages. They embed the same remote URL and public key, so installing
+a bundle also configures the signed branch for later updates. A successful CI
+publish makes the update available; `flatpak update` installs it, while automatic
+installation by GNOME Software or another desktop updater depends on its settings.
 
 Existing installations that still use `toxblh/flatpak` must change their remote
 URL once before that old repository is removed:
