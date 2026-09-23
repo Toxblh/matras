@@ -51,5 +51,5 @@ install -Dpm644 data/icons/hicolor/scalable/apps/ru.toxblh.Matras.svg \
 %doc README.md LICENSE
 
 %changelog
-* Wed Sep 23 2026 Anton Palgunov <toxblh@gmail.com> 0.1.0-alt1
+* Wed Sep 23 2026 Builder <hasherc-ci@altlinux.org> 0.1.0-alt1
 - Initial ALT package.

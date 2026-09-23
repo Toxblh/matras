@@ -30,6 +30,7 @@ jobs:
           # Distinct branch and run releases avoid overwriting published RPMs.
           release="alt1.${{ matrix.branch }}.g${GITHUB_SHA:0:12}.r${GITHUB_RUN_ID}"
           sed -i "s/^Release: alt1$/Release: $release/" matras.spec
+          sed -i "s/ 0.1.0-alt1$/ 0.1.0-$release/" matras.spec
 
       - name: Build RPM in ALT ${{ matrix.branch }}
         uses: actions/build-rpm-action@a29a423f8a77bfa2f5e9b42aa9fae85fa7fc75f5
