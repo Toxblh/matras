@@ -1,0 +1,5 @@
+$ cargo test -p matras --lib ui::sidebar::tests::returning_to_collapsed_sidebar_clears_the_selected_channel -- --exact --test-threads=1
+running 1 test
+test ui::sidebar::tests::returning_to_collapsed_sidebar_clears_the_selected_channel ... FAILED
+assertion failed: list.selected_row().is_none()
+test result: 0 passed; 1 failed; 0 ignored

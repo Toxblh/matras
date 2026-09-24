@@ -353,7 +353,7 @@ impl Player {
                     .halign(gtk::Align::Start)
                     .child(&still)
                     .build();
-                let overlay = gtk::Overlay::builder().child(&sized).build();
+                let overlay = poster_overlay(&sized);
                 overlay.add_overlay(&play);
                 overlay.add_overlay(&spinner);
                 overlay.add_overlay(&label);
@@ -547,6 +547,19 @@ fn no_offload(video: &gtk::Video) {
     video.set_graphics_offload(gtk::GraphicsOffloadEnabled::Disabled);
 }
 
+/// Keeps the controls positioned against the poster, even when the message
+/// row gets wider than the poster's clamp.
+fn poster_overlay(child: &impl IsA<gtk::Widget>) -> gtk::Overlay {
+    gtk::Overlay::builder()
+        .child(child)
+        .halign(poster_overlay_alignment())
+        .build()
+}
+
+fn poster_overlay_alignment() -> gtk::Align {
+    gtk::Align::Start
+}
+
 fn note(message: &str) -> gtk::Label {
     let label = gtk::Label::builder()
         .label(message)
@@ -576,6 +589,11 @@ fn sanitised(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poster_overlay_is_aligned_to_its_clamped_child() {
+        assert_eq!(poster_overlay_alignment(), gtk::Align::Start);
+    }
 
     fn file(mime: &str, extension: &str) -> FileInfo {
         FileInfo {

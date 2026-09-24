@@ -200,6 +200,13 @@ impl ChannelSidebar {
         self.search_entry.grab_focus();
     }
 
+    /// Update selection for a collapsed navigation view. Returning to the
+    /// sidebar clears ListBox's retained selection so its current row can be
+    /// activated with one click.
+    pub fn navigation_state_changed(&self, collapsed: bool, showing_content: bool) {
+        clear_selection_if_return(&self.list, collapsed, showing_content);
+    }
+
     pub fn refresh(&self, state: &SharedState, avatars: &Avatars) {
         let (groups, signature) = {
             let st = state.borrow();
@@ -457,6 +464,16 @@ fn sidebar_signature(
     }
     state.presence(&state.me.id).hash(&mut hash);
     hash.finish()
+}
+
+pub(crate) fn should_clear_selection_on_return(collapsed: bool, showing_content: bool) -> bool {
+    collapsed && !showing_content
+}
+
+fn clear_selection_if_return(list: &gtk::ListBox, collapsed: bool, showing_content: bool) {
+    if should_clear_selection_on_return(collapsed, showing_content) {
+        list.unselect_all();
+    }
 }
 
 /// The status dot drawn over your own avatar.
@@ -1050,6 +1067,21 @@ mod tests {
     use super::*;
     use mattermost_api::models::{ChannelMember, ClientConfig};
     use mattermost_api::Client;
+
+    #[test]
+    fn returning_to_collapsed_sidebar_clears_the_selected_channel() {
+        assert!(should_clear_selection_on_return(true, false));
+        assert!(!should_clear_selection_on_return(false, false));
+        assert!(!should_clear_selection_on_return(true, true));
+
+        gtk::init().expect("GTK display for selection transition test");
+        let list = gtk::ListBox::new();
+        let row = gtk::ListBoxRow::new();
+        list.append(&row);
+        list.select_row(Some(&row));
+        clear_selection_if_return(&list, true, false);
+        assert!(list.selected_row().is_none());
+    }
 
     /// One channel with `total` posts in it, of which `read` have been seen.
     fn revision(total: i64, read: i64, mentions: i64) -> u64 {

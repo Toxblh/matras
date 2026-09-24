@@ -1129,19 +1129,25 @@ fn render_block(
             label.set_text(&text);
             label.set_wrap(false);
             label.add_css_class("message-code");
-            // Long lines scroll rather than widening the whole conversation.
-            let scroller = gtk::ScrolledWindow::builder()
-                .hscrollbar_policy(gtk::PolicyType::Automatic)
-                .vscrollbar_policy(gtk::PolicyType::Never)
-                .propagate_natural_height(true)
-                .propagate_natural_width(true)
-                .child(&label)
-                .build();
-            scroller.add_css_class("message-code-frame");
-            scroller.upcast()
+            code_scroller(&label).upcast()
         }
     }
 }
+
+fn code_scroller(label: &gtk::Label) -> gtk::ScrolledWindow {
+    // Long lines scroll rather than widening the whole conversation.
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .propagate_natural_width(CODE_SCROLLER_PROPAGATES_NATURAL_WIDTH)
+        .child(label)
+        .build();
+    scroller.add_css_class("message-code-frame");
+    scroller
+}
+
+const CODE_SCROLLER_PROPAGATES_NATURAL_WIDTH: bool = false;
 
 /// Marks put into the text so the buffer can be found again after the markup
 /// has been parsed: where a picture goes, and where a link starts and ends.
@@ -2491,6 +2497,11 @@ mod word_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_code_lines_scroll_without_widening_the_message_pane() {
+        assert!(!CODE_SCROLLER_PROPAGATES_NATURAL_WIDTH);
+    }
 
     fn names(markup: &str) -> Vec<&str> {
         custom_shortcodes(markup)

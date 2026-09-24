@@ -14,6 +14,8 @@ use crate::avatars::Avatars;
 use crate::state::SharedState;
 use crate::ui::message::{self, MessageActions, RowOptions};
 
+const COMPOSER_MIN_CONTENT_WIDTH: i32 = 1;
+
 pub(super) fn scroll_trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
@@ -587,14 +589,7 @@ impl ChatView {
             .right_margin(8)
             .build();
 
-        let entry_frame = gtk::ScrolledWindow::builder()
-            .hexpand(true)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .min_content_height(40)
-            .max_content_height(160)
-            .propagate_natural_height(true)
-            .child(&entry)
-            .build();
+        let entry_frame = build_composer_frame(&entry);
         entry_frame.add_css_class("card");
 
         let send = gtk::Button::builder()
@@ -1835,6 +1830,20 @@ impl ChatView {
     }
 }
 
+fn build_composer_frame(entry: &gtk::TextView) -> gtk::ScrolledWindow {
+    gtk::ScrolledWindow::builder()
+        .hexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        // The TextView's content can have a wide natural minimum. Let the
+        // horizontal composer share the pane width instead of demanding it.
+        .min_content_width(COMPOSER_MIN_CONTENT_WIDTH)
+        .min_content_height(40)
+        .max_content_height(160)
+        .propagate_natural_height(true)
+        .child(entry)
+        .build()
+}
+
 struct HashWriter<'a>(&'a mut DefaultHasher);
 
 impl Write for HashWriter<'_> {
@@ -2081,5 +2090,10 @@ mod tests {
         };
         assert!(!ChatView::feed_shows(Some("c1"), &reply, true));
         assert!(ChatView::feed_shows(Some("c1"), &reply, false));
+    }
+
+    #[test]
+    fn composer_entry_has_a_small_intrinsic_width_for_narrow_windows() {
+        assert_eq!(COMPOSER_MIN_CONTENT_WIDTH, 1);
     }
 }

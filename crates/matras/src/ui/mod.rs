@@ -26,6 +26,7 @@ mod message;
 mod notify;
 mod profile;
 mod rhs;
+mod shortcuts;
 mod sidebar;
 pub mod sso;
 mod storage;
@@ -162,6 +163,29 @@ fn mentioned_names(message: &str) -> Vec<String> {
         rest = &rest[end..];
     }
     names
+}
+
+/// Opening a post from the inbox is an explicit reading action, even when
+/// its channel is already selected. Ordinary channel re-selection remains a
+/// no-op; the caller uses this predicate on that early-return path.
+fn inbox_post_reselect_needs_read_sync(
+    current_channel: Option<&str>,
+    target_channel: &str,
+) -> bool {
+    current_channel == Some(target_channel)
+}
+
+#[cfg(test)]
+mod inbox_navigation_tests {
+    use super::inbox_post_reselect_needs_read_sync;
+
+    #[test]
+    fn opening_a_mention_in_the_current_channel_still_syncs_read_state() {
+        assert!(inbox_post_reselect_needs_read_sync(
+            Some("channel-1"),
+            "channel-1"
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -615,9 +639,21 @@ pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
     let state = crate::demo::state();
     let ui = build_session_ui(window, toasts, state);
     ui.refresh_all();
-    let initial = ui.state.borrow().current_channel.clone();
-    if let Some(id) = initial {
-        ui.dispatch(Action::SelectChannel(id));
+    if std::env::var_os("MATRAS_DEMO_OPEN_MENTION").is_some() {
+        let mention = ui
+            .state
+            .borrow()
+            .mentions
+            .first()
+            .map(|post| (post.channel_id.clone(), post.id.clone()));
+        if let Some((channel_id, post_id)) = mention {
+            ui.jump_to_post(channel_id, post_id);
+        }
+    } else {
+        let initial = ui.state.borrow().current_channel.clone();
+        if let Some(id) = initial {
+            ui.dispatch(Action::SelectChannel(id));
+        }
     }
 }
 
@@ -871,6 +907,17 @@ fn build_session_ui(
         .show_content(true)
         .build();
 
+    // When a narrow window returns from a conversation to the channel list,
+    // clear ListBox's retained selection. Otherwise selecting that same
+    // conversation again does not emit row-selected, so it appears to need a
+    // double click.
+    split.connect_show_content_notify({
+        let channels = channels.clone();
+        move |split| {
+            channels.navigation_state_changed(split.is_collapsed(), split.shows_content());
+        }
+    });
+
     // Collapse in two steps: the thread panel overlays the conversation first,
     // then the channel list folds into a navigation stack.
     //
@@ -1039,7 +1086,7 @@ fn build_session_ui(
         for (action, keys) in [
             ("win.quick-switch", &["<Control>k"][..]),
             ("win.search", &["<Control>f"]),
-            ("win.inbox", &["<Control><Shift>i"]),
+            ("win.inbox", shortcuts::INBOX_ACCELERATOR),
             ("win.close-panel", &["Escape"]),
             ("win.new-channel", &["<Control>n"]),
             ("win.next-unread", &["<Control><Shift>Down"]),
@@ -4353,7 +4400,7 @@ impl Ui {
     /// it is not, fetch the page around it, because a hit from three months
     /// ago is not reachable by paging back from today.
     fn jump_to_post(self: &Rc<Self>, channel_id: String, post_id: String) {
-        self.select_channel(channel_id.clone());
+        self.select_channel_inner(channel_id.clone(), true);
 
         // After the channel's own load and layout have had their turn.
         let ui = self.clone();
@@ -5307,6 +5354,10 @@ impl Ui {
     }
 
     fn select_channel(self: &Rc<Self>, channel_id: String) {
+        self.select_channel_inner(channel_id, false);
+    }
+
+    fn select_channel_inner(self: &Rc<Self>, channel_id: String, from_post_jump: bool) {
         self.split.set_show_content(true);
         self.capture_scroll_anchor();
         // Flush the outgoing channel's draft *before* the composer is pointed
@@ -5315,6 +5366,13 @@ impl Ui {
         {
             let mut st = self.state.borrow_mut();
             if st.current_channel.as_deref() == Some(channel_id.as_str()) {
+                let (client, crt) = (st.client.clone(), st.crt_enabled);
+                drop(st);
+                if from_post_jump
+                    && inbox_post_reselect_needs_read_sync(Some(channel_id.as_str()), &channel_id)
+                {
+                    self.mark_channel_viewed(channel_id, client, crt);
+                }
                 return;
             }
             st.current_channel = Some(channel_id.clone());
@@ -5423,14 +5481,24 @@ impl Ui {
 
         // Tell the server we are looking at this channel so read state syncs to
         // our other sessions.
+        self.mark_channel_viewed(channel_id, client, crt);
+    }
+
+    /// Sync the current read position to Mattermost and clear the local unread
+    /// counters. Inbox post jumps use this even when their channel was already
+    /// selected, because that path does not otherwise re-enter channel setup.
+    fn mark_channel_viewed(
+        self: &Rc<Self>,
+        channel_id: String,
+        client: mattermost_api::Client,
+        crt: bool,
+    ) {
         let id = channel_id.clone();
-        let view_client = client.clone();
         runtime::spawn(
-            async move { view_client.view_channel(&id, "", crt).await },
+            async move { client.view_channel(&id, "", crt).await },
             |_| {},
         );
 
-        // Locally zero the unread counters so the sidebar reacts immediately.
         {
             let mut st = self.state.borrow_mut();
             let total = st
