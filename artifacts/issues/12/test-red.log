@@ -1,0 +1,19 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 27.13s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 1 test
+test ui::call_dock::dock_location_tests::mobile_dock_follows_the_visible_page ... 
+thread 'ui::call_dock::dock_location_tests::mobile_dock_follows_the_visible_page' (851380) panicked at crates/matras/src/ui/call_dock.rs:638:9:
+assertion failed: !dock_belongs_in_chat(true, false)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    ui::call_dock::dock_location_tests::mobile_dock_follows_the_visible_page
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 139 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p matras --lib`

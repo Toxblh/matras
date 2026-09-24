@@ -1,0 +1,28 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.92s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 2 tests
+test ui::call_dock::hand_button_tests::lowered_hand_keeps_the_flat_raise_action ... 
+thread 'ui::call_dock::hand_button_tests::lowered_hand_keeps_the_flat_raise_action' (852437) panicked at crates/matras/src/ui/call_dock.rs:625:9:
+assertion `left == right` failed
+  left: ("view-sort-descending-symbolic", "Raise your hand", true)
+ right: ("hand-openyay-symbolic", "Raise your hand", true)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test ui::call_dock::hand_button_tests::raised_hand_uses_the_hand_icon_and_a_visible_active_button ... 
+thread 'ui::call_dock::hand_button_tests::raised_hand_uses_the_hand_icon_and_a_visible_active_button' (852438) panicked at crates/matras/src/ui/call_dock.rs:617:9:
+assertion `left == right` failed
+  left: ("view-sort-descending-symbolic", "Lower your hand", false)
+ right: ("hand-openyay-symbolic", "Lower your hand", false)
+FAILED
+
+failures:
+
+failures:
+    ui::call_dock::hand_button_tests::lowered_hand_keeps_the_flat_raise_action
+    ui::call_dock::hand_button_tests::raised_hand_uses_the_hand_icon_and_a_visible_active_button
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 138 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p matras --lib`

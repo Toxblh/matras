@@ -1,0 +1,11 @@
+Command:
+  cargo test -p matras --lib ui::shortcuts::tests::inbox_shortcut_does_not_steal_the_gtk_inspector -- --exact --nocapture
+
+Result before the fix: exit 101
+
+running 1 test
+thread 'ui::shortcuts::tests::inbox_shortcut_does_not_steal_the_gtk_inspector' panicked:
+assertion `left != right` failed
+left: ["<Control><Shift>i"]
+right: ["<Control><Shift>i"]
+test result: FAILED. 0 passed; 1 failed

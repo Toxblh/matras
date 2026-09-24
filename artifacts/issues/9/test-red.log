@@ -1,0 +1,7 @@
+$ cargo test --offline -p matras --lib ui::sidebar::tests::inbox_button_moves_between_desktop_sidebar_and_mobile_content -- --exact
+running 1 test
+test ui::sidebar::tests::inbox_button_moves_between_desktop_sidebar_and_mobile_content ... FAILED
+assertion `left == right` failed
+left: (true, false)
+right: (false, true)
+test result: 0 passed; 1 failed; 0 ignored

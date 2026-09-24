@@ -1,0 +1,9 @@
+Command:
+  cargo test -p matras --lib ui::inbox_navigation_tests::opening_a_mention_in_the_current_channel_still_syncs_read_state -- --exact
+
+Result after the fix: exit 0
+
+running 1 test
+test ui::inbox_navigation_tests::opening_a_mention_in_the_current_channel_still_syncs_read_state ... ok
+
+test result: ok. 1 passed; 0 failed

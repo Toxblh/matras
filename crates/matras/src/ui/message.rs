@@ -379,8 +379,6 @@ pub fn build(
     // button in the hover bar, and a permanent "Reply" under every message is
     // just noise.
 
-    row.append(&body);
-
     // Clicking the message opens its thread — the whole row, not just the
     // reply count, which is what every other client does and what people try
     // first. A secondary click is left alone so the context menu still works,
@@ -470,20 +468,36 @@ pub fn build(
 
     let mine = post.user_id == state.borrow().me.id;
     let saved = state.borrow().saved_posts.contains(&post.id);
-    row.append(&hover_actions(
-        post,
-        actions,
-        options.show_thread_footer,
-        mine,
-        saved,
-    ));
-
     // An unconfirmed send stays dimmed until the server echoes it back.
     if post.is_pending() {
         row.add_css_class("message-pending");
     }
 
+    let action_bar = hover_actions(post, actions, options.show_thread_footer, mine, saved);
+    row.append(&body_with_hover_actions(
+        body.upcast_ref(),
+        action_bar.upcast_ref(),
+    ));
+
     row.upcast()
+}
+
+/// Hover controls float over the message instead of taking a permanent
+/// trailing column. Otherwise their hidden buttons still add roughly 140 px
+/// to every row's minimum width, preventing the conversation from fitting a
+/// PinePhone-sized window.
+fn body_with_hover_actions(body: &gtk::Widget, actions: &gtk::Widget) -> gtk::Overlay {
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(body));
+    actions.set_halign(gtk::Align::End);
+    actions.set_valign(gtk::Align::Start);
+    overlay.add_overlay(actions);
+    overlay.set_measure_overlay(actions, hover_actions_affect_minimum_width());
+    overlay
+}
+
+fn hover_actions_affect_minimum_width() -> bool {
+    false
 }
 
 /// The small react / reply buttons on the right of a row.
@@ -1129,19 +1143,25 @@ fn render_block(
             label.set_text(&text);
             label.set_wrap(false);
             label.add_css_class("message-code");
-            // Long lines scroll rather than widening the whole conversation.
-            let scroller = gtk::ScrolledWindow::builder()
-                .hscrollbar_policy(gtk::PolicyType::Automatic)
-                .vscrollbar_policy(gtk::PolicyType::Never)
-                .propagate_natural_height(true)
-                .propagate_natural_width(true)
-                .child(&label)
-                .build();
-            scroller.add_css_class("message-code-frame");
-            scroller.upcast()
+            code_scroller(&label).upcast()
         }
     }
 }
+
+fn code_scroller(label: &gtk::Label) -> gtk::ScrolledWindow {
+    // Long lines scroll rather than widening the whole conversation.
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .propagate_natural_width(CODE_SCROLLER_PROPAGATES_NATURAL_WIDTH)
+        .child(label)
+        .build();
+    scroller.add_css_class("message-code-frame");
+    scroller
+}
+
+const CODE_SCROLLER_PROPAGATES_NATURAL_WIDTH: bool = false;
 
 /// Marks put into the text so the buffer can be found again after the markup
 /// has been parsed: where a picture goes, and where a link starts and ends.
@@ -2056,6 +2076,16 @@ pub fn plural(n: i64, one: &'static str, many: &'static str) -> &'static str {
     }
 }
 
+#[cfg(test)]
+mod responsive_width_tests {
+    use super::*;
+
+    #[test]
+    fn hidden_message_actions_do_not_set_the_message_row_minimum_width() {
+        assert!(!hover_actions_affect_minimum_width());
+    }
+}
+
 /// Mattermost timestamps are Unix **milliseconds**.
 /// Replaces whole-word occurrences only, so a handle that happens to be a
 /// substring of another word is left alone.
@@ -2491,6 +2521,11 @@ mod word_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_code_lines_scroll_without_widening_the_message_pane() {
+        assert!(!CODE_SCROLLER_PROPAGATES_NATURAL_WIDTH);
+    }
 
     fn names(markup: &str) -> Vec<&str> {
         custom_shortcodes(markup)

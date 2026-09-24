@@ -1,0 +1,4 @@
+$ cargo test -p matras --lib ui::sidebar::tests::returning_to_collapsed_sidebar_clears_the_selected_channel -- --exact --test-threads=1
+running 1 test
+test ui::sidebar::tests::returning_to_collapsed_sidebar_clears_the_selected_channel ... ok
+test result: ok. 1 passed; 0 failed

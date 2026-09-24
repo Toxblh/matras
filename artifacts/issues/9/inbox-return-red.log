@@ -1,0 +1,5 @@
+$ cargo test --offline -p matras --lib ui::sidebar::tests::returning_to_mobile_sidebar_closes_an_open_inbox_panel -- --exact
+running 1 test
+test ui::sidebar::tests::returning_to_mobile_sidebar_closes_an_open_inbox_panel ... FAILED
+assertion failed: should_close_inbox_on_return(true, false, true)
+test result: 0 passed; 1 failed; 0 ignored

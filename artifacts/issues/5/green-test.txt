@@ -1,0 +1,9 @@
+Command:
+  cargo test -p matras --lib ui::shortcuts::tests::inbox_shortcut_does_not_steal_the_gtk_inspector -- --exact --nocapture
+
+Result after the fix: exit 0
+
+running 1 test
+test ui::shortcuts::tests::inbox_shortcut_does_not_steal_the_gtk_inspector ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored

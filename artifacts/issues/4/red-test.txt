@@ -1,0 +1,9 @@
+Command:
+  cargo test -p matras --lib ui::inbox_navigation_tests::opening_a_mention_in_the_current_channel_still_syncs_read_state -- --exact
+
+Result before the fix: exit 101
+
+running 1 test
+test ui::inbox_navigation_tests::opening_a_mention_in_the_current_channel_still_syncs_read_state ... FAILED
+
+assertion failed: inbox_post_reselect_needs_read_sync(Some("channel-1"), "channel-1")

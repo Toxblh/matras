@@ -1,0 +1,26 @@
+    Blocking waiting for file lock on build directory
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 54.95s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 3 tests
+
+thread 'ui::rhs::inbox_close_tests::a_window_close_dismisses_an_open_inbox' (298) panicked at crates/matras/src/ui/rhs.rs:976:9:
+assertion failed: window_close_dismisses_inbox(&PanelMode::Inbox)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test ui::rhs::inbox_close_tests::a_window_close_dismisses_an_open_inbox ... 
+thread 'ui::rhs::inbox_close_tests::the_inbox_uses_only_the_window_close_control' (300) panicked at crates/matras/src/ui/rhs.rs:971:9:
+assertion failed: !explicit_close_visible(&PanelMode::Inbox)
+FAILED
+test ui::rhs::inbox_close_tests::the_inbox_uses_only_the_window_close_control ... FAILED
+test ui::rhs::inbox_close_tests::closing_another_panel_is_left_to_window_background_mode ... ok
+
+failures:
+
+failures:
+    ui::rhs::inbox_close_tests::a_window_close_dismisses_an_open_inbox
+    ui::rhs::inbox_close_tests::the_inbox_uses_only_the_window_close_control
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 135 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p matras --lib`

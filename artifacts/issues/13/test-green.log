@@ -1,0 +1,10 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.98s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 2 tests
+test ui::call_dock::hand_button_tests::lowered_hand_keeps_the_flat_raise_action ... ok
+test ui::call_dock::hand_button_tests::raised_hand_uses_the_hand_icon_and_a_visible_active_button ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 138 filtered out; finished in 0.00s
+

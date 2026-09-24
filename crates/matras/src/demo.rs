@@ -25,8 +25,21 @@ pub fn state() -> SharedState {
 
     let mut st = AppState::new(client, me.clone(), ClientConfig(config), false);
 
+    let mut lena = user("u-lena", "lena", "Lena", "Petrova");
+    if std::env::var_os("MATRAS_DEMO_STATUS").is_some() {
+        lena.props.insert(
+            "customStatus".into(),
+            serde_json::json!({
+                "emoji": "house",
+                "text": "Working from home",
+                "duration": "today"
+            })
+            .to_string(),
+        );
+    }
+
     for u in [
-        user("u-lena", "lena", "Lena", "Petrova"),
+        lena,
         user("u-mikk", "mikk", "Mikk", "Tamm"),
         user("u-sara", "sara", "Sara", "Okafor"),
         user("u-bot", "buildbot", "Build", "Bot"),
@@ -255,6 +268,28 @@ fn dev_channel_feed() -> ChannelFeed {
         ..Default::default()
     });
     posts.push(edited);
+
+    if std::env::var_os("MATRAS_DEMO_VIDEO").is_some() {
+        let mut video = post(
+            "p-demo-video",
+            "c-dev",
+            "u-sara",
+            "Recording from the call",
+            BASE + 1_200_000,
+        );
+        video.metadata = Some(PostMetadata {
+            files: vec![FileInfo {
+                id: "f-demo-video".into(),
+                name: "call-recording.mp4".into(),
+                extension: "mp4".into(),
+                size: 8_388_608,
+                mime_type: "video/mp4".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        posts.push(video);
+    }
 
     // An urgent message, to exercise the priority tag.
     let mut urgent = post(

@@ -1,0 +1,41 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.01s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 1 test
+
+thread 'ui::shortcuts::tests::startup_stays_on_the_empty_page_instead_of_selecting_a_saved_channel' (298) panicked at crates/matras/src/ui/shortcuts.rs:73:9:
+assertion `left == right` failed
+  left: Some("last-opened")
+ right: None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test ui::shortcuts::tests::startup_stays_on_the_empty_page_instead_of_selecting_a_saved_channel ... FAILED
+
+failures:
+
+failures:
+    ui::shortcuts::tests::startup_stays_on_the_empty_page_instead_of_selecting_a_saved_channel
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 139 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p matras --lib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.88s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 1 test
+
+thread 'ui::shortcuts::tests::escape_returns_from_a_channel_to_the_empty_page' (311) panicked at crates/matras/src/ui/shortcuts.rs:78:9:
+assertion `left == right` failed
+  left: None
+ right: Home
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test ui::shortcuts::tests::escape_returns_from_a_channel_to_the_empty_page ... FAILED
+
+failures:
+
+failures:
+    ui::shortcuts::tests::escape_returns_from_a_channel_to_the_empty_page
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 139 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p matras --lib`
