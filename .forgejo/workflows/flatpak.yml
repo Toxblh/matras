@@ -52,6 +52,28 @@ jobs:
           FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
         run: build-aux/publish-flatpak.sh --publish
 
+      - name: Install OCI registry client
+        run: |
+          apt-get update
+          apt-get install -y skopeo
+
+      - name: Publish Flatpak OCI image
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          arch=$(flatpak --default-arch)
+          image="Matras-$arch.oci"
+          ref=.flatpak-repo/ru.toxblh.Matras.flatpakref
+          repo_url=$(sed -n 's/^Url=//p' "$ref")
+          public_key=$(mktemp)
+          trap 'rm -f "$public_key"' EXIT
+          sed -n 's/^GPGKey=//p' "$ref" | base64 -d > "$public_key"
+          flatpak build-bundle --oci --arch="$arch" \
+            --repo-url="$repo_url" --gpg-keys="$public_key" \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            .flatpak-repo "$image" ru.toxblh.Matras stable
+          build-aux/publish-oci-flatpak.sh "$arch" "$image" stable oci-test
+
       - name: Publish bundle to Matras Packages
         env:
           PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
@@ -122,6 +144,28 @@ jobs:
           FLATPAK_GPG_KEY_B64: ${{ secrets.FLATPAK_GPG_KEY_B64 }}
           FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
         run: build-aux/publish-flatpak.sh --publish
+
+      - name: Install OCI registry client
+        run: |
+          apt-get update
+          apt-get install -y skopeo
+
+      - name: Publish Flatpak OCI image
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          arch=$(flatpak --default-arch)
+          image="Matras-$arch.oci"
+          ref=.flatpak-repo/ru.toxblh.Matras.flatpakref
+          repo_url=$(sed -n 's/^Url=//p' "$ref")
+          public_key=$(mktemp)
+          trap 'rm -f "$public_key"' EXIT
+          sed -n 's/^GPGKey=//p' "$ref" | base64 -d > "$public_key"
+          flatpak build-bundle --oci --arch="$arch" \
+            --repo-url="$repo_url" --gpg-keys="$public_key" \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            .flatpak-repo "$image" ru.toxblh.Matras stable
+          build-aux/publish-oci-flatpak.sh "$arch" "$image" stable oci-test
 
       - name: Publish bundle to Matras Packages
         env:

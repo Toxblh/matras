@@ -90,6 +90,41 @@ impl ChannelSidebar {
             .build();
         header.pack_start(&switcher.button);
 
+        // HeaderBar packs end children in reverse visual order. Build them
+        // menu, inbox, search so the visible order reads search, inbox, menu.
+        // The main menu holds actions for the *list*, not any one channel.
+        let menu = gtk::gio::Menu::new();
+        let channels_section = gtk::gio::Menu::new();
+        channels_section.append(Some("Jump to…"), Some("win.quick-switch"));
+        channels_section.append(Some("Scheduled Messages"), Some("win.scheduled-posts"));
+        channels_section.append(Some("New Channel…"), Some("win.new-channel"));
+        channels_section.append(Some("New Category…"), Some("win.new-category"));
+        channels_section.append(Some("Browse Teams…"), Some("win.browse-teams"));
+        channels_section.append(Some("Leave This Team"), Some("win.leave-team"));
+        channels_section.append(Some("Browse Channels…"), Some("win.browse-channels"));
+        menu.append_section(None, &channels_section);
+        let account_section = gtk::gio::Menu::new();
+        account_section.append(Some("Edit Profile…"), Some("win.edit-profile"));
+        account_section.append(Some("Set a Status…"), Some("win.custom-status"));
+        account_section.append(Some("Notifications…"), Some("win.notification-settings"));
+        account_section.append(Some("Sign Out"), Some("win.sign-out"));
+
+        let app_section = gtk::gio::Menu::new();
+        app_section.append(Some("Storage…"), Some("win.storage"));
+        app_section.append(Some("Keep Running in Background"), Some("app.background"));
+        app_section.append(Some("Quit"), Some("app.quit"));
+        menu.append_section(None, &app_section);
+        menu.append_section(None, &account_section);
+
+        let menu_button = gtk::MenuButton::builder()
+            .icon_name("open-menu-symbolic")
+            .tooltip_text("Main menu")
+            .menu_model(&menu)
+            .primary(true)
+            .build();
+        menu_button.add_css_class("flat");
+        header.pack_end(&menu_button);
+
         let inbox_badge = gtk::Label::builder().visible(false).build();
         inbox_badge.add_css_class("mention-badge");
         inbox_badge.add_css_class("button-badge");
@@ -130,46 +165,11 @@ impl ChannelSidebar {
             .build();
         header.pack_end(&search_button);
 
-        // The main menu, where the things you do to the *list* live rather
-        // than to any one channel.
-        let menu = gtk::gio::Menu::new();
-        let channels_section = gtk::gio::Menu::new();
-        channels_section.append(Some("Jump to…"), Some("win.quick-switch"));
-        channels_section.append(Some("Scheduled Messages"), Some("win.scheduled-posts"));
-        channels_section.append(Some("New Channel…"), Some("win.new-channel"));
-        channels_section.append(Some("New Category…"), Some("win.new-category"));
-        channels_section.append(Some("Browse Teams…"), Some("win.browse-teams"));
-        channels_section.append(Some("Leave This Team"), Some("win.leave-team"));
-        channels_section.append(Some("Browse Channels…"), Some("win.browse-channels"));
-        menu.append_section(None, &channels_section);
-        let account_section = gtk::gio::Menu::new();
-        account_section.append(Some("Edit Profile…"), Some("win.edit-profile"));
-        account_section.append(Some("Set a Status…"), Some("win.custom-status"));
-        account_section.append(Some("Notifications…"), Some("win.notification-settings"));
-        account_section.append(Some("Sign Out"), Some("win.sign-out"));
-
-        let app_section = gtk::gio::Menu::new();
-        app_section.append(Some("Storage…"), Some("win.storage"));
-        app_section.append(Some("Keep Running in Background"), Some("app.background"));
-        app_section.append(Some("Quit"), Some("app.quit"));
-        menu.append_section(None, &app_section);
-        menu.append_section(None, &account_section);
-
-        let menu_button = gtk::MenuButton::builder()
-            .icon_name("open-menu-symbolic")
-            .tooltip_text("Main menu")
-            .menu_model(&menu)
-            .primary(true)
-            .build();
-        menu_button.add_css_class("flat");
-        header.pack_end(&menu_button);
-
         // On activate, not on every keystroke: a post search is a round trip
         // to the server, and searching per character would be a request per
         // character.
         search_entry.connect_activate(move |entry| {
-            let terms = entry.text().trim().to_string();
-            if !terms.is_empty() {
+            if let Some(terms) = submitted_search_terms(entry.text().as_str()) {
                 on_search(terms);
             }
         });
@@ -516,6 +516,11 @@ pub(crate) fn inbox_button_visibility(collapsed: bool, showing_content: bool) ->
 /// there before showing it when the channel list is currently on screen.
 pub(crate) fn inbox_requires_chat_navigation(collapsed: bool, showing_content: bool) -> bool {
     collapsed && !showing_content
+}
+
+fn submitted_search_terms(input: &str) -> Option<String> {
+    let terms = input.trim();
+    (!terms.is_empty()).then(|| terms.to_string())
 }
 
 pub(crate) fn should_close_inbox_on_return(
@@ -1147,6 +1152,15 @@ mod tests {
         let small_width = super::super::profile::presence_badge_size(24);
         let large_width = super::super::profile::presence_badge_size(40);
         assert_eq!((small_width, large_width), (10, 13));
+    }
+
+    #[test]
+    fn search_submission_trims_terms_and_ignores_an_empty_query() {
+        assert_eq!(
+            submitted_search_terms("  calls regression  "),
+            Some("calls regression".into())
+        );
+        assert_eq!(submitted_search_terms(" \n\t "), None);
     }
 
     #[test]
