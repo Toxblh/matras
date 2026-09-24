@@ -25,6 +25,9 @@ jobs:
           apt-get install -y rust rust-cargo
           mkdir -p .cargo
           cargo vendor --locked vendor > .cargo/config.toml
+          # Gear builds from a committed source archive; include the generated
+          # offline Cargo registry and its source-replacement config in it.
+          git add -f .cargo/config.toml vendor/
           release="alt1.sisyphus.aarch64.g${GITHUB_SHA:0:12}.r${GITHUB_RUN_ID}"
           sed -i "s/^Release: alt1$/Release: $release/" matras.spec
           sed -i "s/ 0.1.0-alt1$/ 0.1.0-$release/" matras.spec
