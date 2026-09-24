@@ -1,52 +1,45 @@
 # Issue #1: Неадаптивный интерфейс
 
-Issue: https://altlinux.space/toxblh/matras/issues/1 (open; no comments)
+Issue: https://altlinux.space/toxblh/matras/issues/1 (open)
 
-## Reproduction
+## Reproduction and fix
 
-Inspected both issue attachments. At the reported narrow width the composer
-extends beyond the visible chat pane. The second attachment shows message
-content widening and clipping the rest of the interface. The cause was
-confirmed in the widget configuration: the composer scroller left its minimum
-content width unconstrained (`-1`), and code block scrollers propagated the
-natural width of their unwrapped labels.
+The attached screenshots show the chat composer and message content extending
+beyond a narrow window. Regression checks first failed because the composer
+scroller had an unconstrained minimum width and code blocks propagated their
+unwrapped natural width. Their red/green output is in [test-log.txt](test-log.txt).
 
-## Regression tests
+The composer now has a one-pixel minimum content width, code lines scroll inside
+their own block, and message hover controls overlay the body without widening
+the row. The Inbox panel's three oversized tabs were also replaced with a
+compact, equal-width tab bar. In the composer, attachment, priority, and
+send-later actions live under a four-square menu left of the text field; the
+send button stays visible at the right. The narrow row regression test failed
+with a 385px minimum before the overlay fix, then passed; see
+[responsive-red.log](responsive-red.log) and
+[responsive-green.log](responsive-green.log).
 
-Both assertions failed on the unfixed widget properties before implementation:
+## Screenshot evidence
 
-- Code scroller: `assertion failed: !scroller.propagates_natural_width()`.
-- Composer: `left: -1`, expected `right: 1` for its minimum content width.
+Each image is a deterministic demo state, saved separately at every required
+viewport. `corrected-state-360x720.png` shows the compact composer and full
+header/feed; `menu-state-360x720.png` is the latest screenshot of the four-square
+layout. The 360px run after the Inbox tab fix had no overlay-width warning.
 
-After the fix both focused tests passed. Exact commands and output excerpts are
-in [test-log.txt](test-log.txt).
+- PinePhone 360×720: [corrected state](corrected-state-360x720.png), [compact composer](menu-state-360x720.png)
+- Issue attachment application bounds, 720×800: [corrected state](corrected-state-720x800.png)
+- Desktop, 1320×840: [corrected state](corrected-state-1320x840.png)
+- Earlier 400×800 render: [corrected-state.png](corrected-state.png)
 
-## Fix
-
-- Set the composer scroller minimum content width to one pixel so the horizontal
-  composer can take the pane's available width.
-- Stop code block scrollers from propagating long unwrapped lines as the chat
-  pane's natural width; those lines remain horizontally scrollable within the
-  code block.
-
-## Visual evidence
-
-[corrected-state.png](corrected-state.png) is a deterministic Matras demo at
-400×800. I inspected it: the composer, text entry and send button are all inside
-the window, and message text wraps within the chat pane. This screenshot shows
-the corrected narrow layout; the code-line scrolling behavior is covered by the
-regression test rather than claimed as visible in the screenshot.
+The code-block scrolling behavior is proved by its regression test rather than
+claimed as visible in these screenshots.
 
 ## Checks
 
-- Focused code scroller regression: passed.
-- Focused composer regression: passed.
-- `cargo test -p matras --lib -- --test-threads=1`: 123 passed.
-- `cargo test --workspace -- --test-threads=1`: passed; Matras 123 tests,
-  Mattermost API 22 tests, Mattermost calls 36 tests, plus doc-tests.
-- `cargo check -p matras --lib`: passed.
-- `rustfmt --check --edition 2021 crates/matras/src/ui/chat.rs
-  crates/matras/src/ui/message.rs`: passed.
-
-Workspace-wide `cargo fmt --all -- --check` and `git diff --check` both pass
-with all parallel issue changes integrated.
+Before-fix assertion failures and focused green runs are recorded in
+[test-log.txt](test-log.txt); the minimum-width regression is recorded in the
+responsive logs. The final combined command
+`cargo test --offline --workspace -- --test-threads=1` passed (Matras 140, API
+22, Calls 36, plus doc-tests); summary: [workspace-test.log](../workspace-test.log).
+`cargo fmt --all -- --check`, `git diff --check`, and `cargo build --offline -p
+matras` passed.

@@ -1,0 +1,9 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.06s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 1 test
+test ui::media::tests::poster_overlay_is_aligned_to_its_clamped_child ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 139 filtered out; finished in 0.00s
+

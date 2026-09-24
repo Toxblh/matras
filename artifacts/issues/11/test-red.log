@@ -1,0 +1,19 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.42s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 1 test
+test ui::sidebar::tests::channel_name_does_not_expand_status_emoji_away_from_name ... 
+thread 'ui::sidebar::tests::channel_name_does_not_expand_status_emoji_away_from_name' (849983) panicked at crates/matras/src/ui/sidebar.rs:1137:9:
+assertion failed: !label.hexpands()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    ui::sidebar::tests::channel_name_does_not_expand_status_emoji_away_from_name
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 139 filtered out; finished in 0.57s
+
+error: test failed, to rerun pass `-p matras --lib`

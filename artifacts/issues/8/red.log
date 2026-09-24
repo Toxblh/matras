@@ -1,0 +1,11 @@
+$ cargo test -p matras --lib ui::chat::tests::composer_is_one_line_high_and_uses_a_clear_send_affordance -- --exact --nocapture
+
+running 1 test
+
+thread 'ui::chat::tests::composer_is_one_line_high_and_uses_a_clear_send_affordance' panicked:
+assertion `left == right` failed
+  left: 160
+ right: 40
+test ui::chat::tests::composer_is_one_line_high_and_uses_a_clear_send_affordance ... FAILED
+
+test result: FAILED. 0 passed; 1 failed

@@ -1,0 +1,19 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.85s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 1 test
+test ui::message::responsive_width_tests::hidden_message_actions_do_not_set_the_message_row_minimum_width ... 
+thread 'ui::message::responsive_width_tests::hidden_message_actions_do_not_set_the_message_row_minimum_width' (820284) panicked at crates/matras/src/ui/message.rs:2102:9:
+hidden actions widened the message row to 385px
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    ui::message::responsive_width_tests::hidden_message_actions_do_not_set_the_message_row_minimum_width
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 134 filtered out; finished in 0.14s
+
+error: test failed, to rerun pass `-p matras --lib`

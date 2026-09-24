@@ -379,8 +379,6 @@ pub fn build(
     // button in the hover bar, and a permanent "Reply" under every message is
     // just noise.
 
-    row.append(&body);
-
     // Clicking the message opens its thread — the whole row, not just the
     // reply count, which is what every other client does and what people try
     // first. A secondary click is left alone so the context menu still works,
@@ -470,20 +468,36 @@ pub fn build(
 
     let mine = post.user_id == state.borrow().me.id;
     let saved = state.borrow().saved_posts.contains(&post.id);
-    row.append(&hover_actions(
-        post,
-        actions,
-        options.show_thread_footer,
-        mine,
-        saved,
-    ));
-
     // An unconfirmed send stays dimmed until the server echoes it back.
     if post.is_pending() {
         row.add_css_class("message-pending");
     }
 
+    let action_bar = hover_actions(post, actions, options.show_thread_footer, mine, saved);
+    row.append(&body_with_hover_actions(
+        body.upcast_ref(),
+        action_bar.upcast_ref(),
+    ));
+
     row.upcast()
+}
+
+/// Hover controls float over the message instead of taking a permanent
+/// trailing column. Otherwise their hidden buttons still add roughly 140 px
+/// to every row's minimum width, preventing the conversation from fitting a
+/// PinePhone-sized window.
+fn body_with_hover_actions(body: &gtk::Widget, actions: &gtk::Widget) -> gtk::Overlay {
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(body));
+    actions.set_halign(gtk::Align::End);
+    actions.set_valign(gtk::Align::Start);
+    overlay.add_overlay(actions);
+    overlay.set_measure_overlay(actions, hover_actions_affect_minimum_width());
+    overlay
+}
+
+fn hover_actions_affect_minimum_width() -> bool {
+    false
 }
 
 /// The small react / reply buttons on the right of a row.
@@ -2059,6 +2073,16 @@ pub fn plural(n: i64, one: &'static str, many: &'static str) -> &'static str {
         one
     } else {
         many
+    }
+}
+
+#[cfg(test)]
+mod responsive_width_tests {
+    use super::*;
+
+    #[test]
+    fn hidden_message_actions_do_not_set_the_message_row_minimum_width() {
+        assert!(!hover_actions_affect_minimum_width());
     }
 }
 

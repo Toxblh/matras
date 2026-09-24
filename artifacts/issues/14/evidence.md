@@ -1,47 +1,23 @@
-# Issue #14 evidence
+# Issue #14: play-кнопка остаётся на видеопостере
 
-Issue: https://altlinux.space/toxblh/matras/issues/14 — video play icon moves
-out of its poster when the message row is wider than the poster.
+Issue: https://altlinux.space/toxblh/matras/issues/14 (open)
 
-## Reproduction and regression test
+Постер ограничен шириной 420 px, но строка сообщения может быть шире.
+Overlay теперь выравнивается по началу poster clamp, поэтому центрированная
+play-кнопка остаётся на видео, а не уплывает в пустую область строки. До фикса
+GTK allocation-проверка дала центр кнопки x=450 при правой границе poster x=420;
+с конфигурацией `Align::Start` тест проходит. См.
+[test-red.log](test-red.log) и [test-green.log](test-green.log), а также исходный
+геометрический fixture [video-layout.png](video-layout.png).
 
-The still poster is capped at 420 px inside a message row. `Gtk.Overlay` was
-filling the 900 px row while its poster child stayed at the start, so the
-centered play button was positioned at x=450, beyond the poster's right edge.
-The regression test builds that GTK hierarchy and checks the button's actual
-allocated center against the poster bounds.
+Для воспроизводимых окон добавлен demo-video с poster frame:
 
-The original behavior was verified in a real GTK allocation test: with the
-production overlay's default `Fill` alignment, the 900 px row placed the play
-button at x=450, past the 420 px poster. That check failed as expected.
-After adding `Align::Start`, the same GTK geometry check passed and produced
-the screenshot below. GTK widget initialization inside unit tests then proved
-unsafe with Rust's parallel test harness, so the permanent regression test was
-changed to a suite-safe configuration test of the alignment value consumed by
-the production builder.
+- PinePhone 360×720: [state-360x720.png](state-360x720.png)
+- Issue-size 720×1680: [state-720x1680.png](state-720x1680.png)
+- Desktop 1320×840: [state-1320x840.png](state-1320x840.png)
 
-Current regression test:
-
-```sh
-cargo test -p matras --lib ui::media::tests::poster_overlay_is_aligned_to_its_clamped_child -- --exact
-```
-
-The GTK test failed before the fix with `play icon center 450 escaped poster
-width 420 in a 900px row` and passed after the fix. The permanent configuration
-test fails if the overlay alignment changes away from `Start`.
-
-## Screenshot
-
-`video-layout.png` is the 900 px GTK layout fixture captured after the fix. It
-shows the play button within the 420 px poster area; it is not a capture of a
-real video frame.
-
-Screenshot: [video-layout.png](video-layout.png)
-
-## Remaining checks
-
-The initial crate suite found GTK initialization in this test unsafe under the
-parallel harness; the test is now a GTK-free alignment configuration test.
-`cargo test -p matras --lib -- --test-threads=1` passed (123 tests), and
-`cargo test --workspace -- --test-threads=1` passed across the workspace,
-including doc-tests. `cargo fmt --all -- --check` and `git diff --check` pass.
+На всех размерах play-кнопка видна внутри poster. В issue-size и desktop PNG
+видео и строка сообщения полностью видны; на 360 px постер сохраняет
+естественную панорамную пропорцию вложенного клипа.
+Final combined workspace checks passed: 140 Matras tests, 22 Mattermost API,
+36 Mattermost calls, plus doc-tests. See [workspace-test.log](../workspace-test.log).

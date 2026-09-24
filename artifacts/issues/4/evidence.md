@@ -18,9 +18,14 @@ Post jumps now take a dedicated same-channel path through `select_channel_inner`
 - `cargo fmt --check`: passed.
 - `git diff --check`: passed.
 - `cargo test --workspace`: the default parallel run stalled in a GTK sidebar test; `cargo test --workspace -- --test-threads=1` then passed across the workspace, including doc tests.
+- Final combined workspace run also passes all 140 Matras, 22 API, and 36 calls tests; see [workspace-test.log](../workspace-test.log).
 
 ## Screenshot
 
 `corrected-state.png` is a 1320×840 deterministic demo render launched with `MATRAS_DEMO_OPEN_MENTION=1`. The demo begins with Development already selected, then follows the same mention post jump path and shows the target post in the conversation. This is supplementary UI evidence; the screenshot cannot show the server-side read-state update. The inbox badge counts recent mention results, so it remains visible after opening a result.
+
+The same deterministic mention state was captured at PinePhone `360×720`,
+issue-specific `720×800`, and desktop `1320×840` in `matrix-*.png` and inspected
+at each size.
 
 No issue was closed or published; the fix is local and still requires landing on the default branch before resolution.

@@ -1,0 +1,21 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.66s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 1 test
+test ui::media::tests::poster_overlay_is_aligned_to_its_clamped_child ... 
+thread 'ui::media::tests::poster_overlay_is_aligned_to_its_clamped_child' (853272) panicked at crates/matras/src/ui/media.rs:595:9:
+assertion `left == right` failed
+  left: Fill
+ right: Start
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    ui::media::tests::poster_overlay_is_aligned_to_its_clamped_child
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 139 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p matras --lib`

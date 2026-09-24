@@ -6,6 +6,13 @@
    properties. The `var(--name)` spelling only works from libadwaita 1.6, and
    this app targets 1.5. */
 
+/* The editor is a compact, rounded entry while remaining scrollable for
+   multiline Shift+Enter drafts. */
+.composer-entry,
+.composer-entry textview {
+  border-radius: 12px;
+}
+
 /* ── channel list ──────────────────────────────────────────────────────
    Adwaita paints a sidebar row edge to edge, which reads as a stack of cards
    once every row has an avatar in it. Fractal's answer, copied here: strip the

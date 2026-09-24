@@ -1,0 +1,11 @@
+   Compiling matras v0.1.0 (/var/home/toxblh/git/matras/crates/matras)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.99s
+     Running unittests src/lib.rs (target/debug/deps/matras-d988da56bd60d01c)
+
+running 3 tests
+test ui::rhs::inbox_close_tests::the_inbox_uses_only_the_window_close_control ... ok
+test ui::rhs::inbox_close_tests::a_window_close_dismisses_an_open_inbox ... ok
+test ui::rhs::inbox_close_tests::closing_another_panel_is_left_to_window_background_mode ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 137 filtered out; finished in 0.00s
+

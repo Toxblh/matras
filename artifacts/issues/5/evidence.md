@@ -31,11 +31,15 @@ shows the app running after the shortcut change; it does not depict the GTK
 Inspector or prove that the host GTK runtime exposes its Inspector. The
 automated test proves Matras no longer binds the conflicting key. Runtime
 Inspector availability still depends on the GTK build/runtime configuration.
+Supplementary app renders at PinePhone `360×720`, issue-size `720×800`, and
+desktop `1320×840` are saved as `matrix-*.png`; they show layout only and do
+not claim to demonstrate the shortcut at runtime.
 
 ## Status
 
-The focused red/green test is complete. `cargo test --workspace --
---test-threads=1`, `cargo fmt --all -- --check`, and `git diff --check` passed
-with this shortcut fix and the other issue fixes in the combined checkout. The
+The focused red/green test is complete. The final
+`cargo test --offline --workspace -- --test-threads=1` passed (140 Matras, 22
+API, 36 Calls, and doc-tests; see [workspace-test.log](../workspace-test.log));
+`cargo fmt --all -- --check` and `git diff --check` passed. The
 app has not been published, so the issue must remain open until the change
 reaches the default branch.

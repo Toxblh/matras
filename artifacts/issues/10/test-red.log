@@ -1,0 +1,5 @@
+$ cargo test --offline -p matras --lib ui::shortcuts::tests::close_window_shortcut_is_ctrl_w_and_is_distinct_from_inbox -- --exact --test-threads=1
+running 1 test
+test ui::shortcuts::tests::close_window_shortcut_is_ctrl_w_and_is_distinct_from_inbox ... FAILED
+assertion failed: window.lookup_action("close").is_some()
+test result: 0 passed; 1 failed; 0 ignored

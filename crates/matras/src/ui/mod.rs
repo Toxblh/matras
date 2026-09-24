@@ -53,7 +53,7 @@ use call_dock::CallDock;
 use chat::ChatView;
 use message::{MessageActions, PostAction};
 use rhs::{PanelMode, RightPanel};
-use sidebar::{ChannelSidebar, RowAction};
+use sidebar::{inbox_button_visibility, should_close_inbox_on_return, ChannelSidebar, RowAction};
 
 /// The websocket prefix of <https://github.com/Toxblh/mattermost-reactions-notify-plugin>,
 /// which notifies you about reactions to your own posts.
@@ -444,6 +444,10 @@ pub fn build_window(app: &adw::Application) {
         .height_request(400)
         .build();
 
+    // Closing uses the same close-request path as the titlebar button; Ctrl+Q
+    // remains the separate application-wide quit action.
+    shortcuts::install_window_close_shortcut(app, &window);
+
     let toast_overlay = adw::ToastOverlay::new();
     window.set_content(Some(&toast_overlay));
 
@@ -637,7 +641,19 @@ fn start_session(
 /// server. Enabled with `MATRAS_DEMO=1`.
 pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
     let state = crate::demo::state();
+    if std::env::var_os("MATRAS_DEMO_EMPTY_CHAT").is_some() {
+        state.borrow_mut().current_channel = None;
+    }
     let ui = build_session_ui(window, toasts, state);
+    if std::env::var_os("MATRAS_DEMO_VIDEO").is_some() {
+        if let Some(path) = std::env::var_os("MATRAS_DEMO_VIDEO_POSTER") {
+            let file = gtk::gio::File::for_path(path);
+            match gtk::gdk::Texture::from_file(&file) {
+                Ok(texture) => ui.avatars.remember_poster("f-demo-video", texture),
+                Err(error) => tracing::warn!("could not load demo video poster: {error}"),
+            }
+        }
+    }
     ui.refresh_all();
     if std::env::var_os("MATRAS_DEMO_OPEN_MENTION").is_some() {
         let mention = ui
@@ -649,11 +665,31 @@ pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
         if let Some((channel_id, post_id)) = mention {
             ui.jump_to_post(channel_id, post_id);
         }
+    } else if std::env::var_os("MATRAS_DEMO_OPEN_INBOX").is_some() {
+        ui.dispatch(Action::OpenInbox);
+    } else if std::env::var_os("MATRAS_DEMO_EMPTY_CHAT").is_some() {
+        // Render the same no-channel state used by the default startup page.
+        ui.right.set_mode(PanelMode::Hidden);
+        ui.split.set_show_content(true);
+        ui.refresh_messages();
+        ui.refresh_call_ui();
+    } else if std::env::var_os("MATRAS_DEMO_SHOW_SIDEBAR").is_some() {
+        // The narrow breakpoint does not mark the split as collapsed until
+        // the presented window has received its first allocation.
+        glib::timeout_add_local_once(std::time::Duration::from_millis(150), {
+            let ui = ui.clone();
+            move || ui.split.set_show_content(false)
+        });
     } else {
         let initial = ui.state.borrow().current_channel.clone();
         if let Some(id) = initial {
             ui.dispatch(Action::SelectChannel(id));
         }
+    }
+    if std::env::var_os("MATRAS_DEMO_CALL").is_some() {
+        ui.dock.show_demo_preview(true);
+        ui.dock_visible.set(true);
+        ui.host_toolbar().set_reveal_bottom_bars(true);
     }
 }
 
@@ -874,6 +910,12 @@ fn build_session_ui(
         },
         {
             let tx = tx.clone();
+            move || {
+                let _ = tx.send_blocking(Action::OpenInbox);
+            }
+        },
+        {
+            let tx = tx.clone();
             move |status| {
                 let _ = tx.send_blocking(Action::SetStatus(status));
             }
@@ -906,17 +948,40 @@ fn build_session_ui(
         // chat app should land on is the conversation — not the sidebar.
         .show_content(true)
         .build();
-
     // When a narrow window returns from a conversation to the channel list,
     // clear ListBox's retained selection. Otherwise selecting that same
     // conversation again does not emit row-selected, so it appears to need a
     // double click.
-    split.connect_show_content_notify({
+    let update_inbox_buttons: Rc<dyn Fn(&adw::NavigationSplitView)> = Rc::new({
         let channels = channels.clone();
+        let chat = chat.clone();
         move |split| {
-            channels.navigation_state_changed(split.is_collapsed(), split.shows_content());
+            let (show_in_sidebar, show_in_chat) =
+                inbox_button_visibility(split.is_collapsed(), split.shows_content());
+            channels.set_inbox_button_visible(show_in_sidebar);
+            chat.set_inbox_button_visible(show_in_chat);
         }
     });
+    split.connect_show_content_notify({
+        let channels = channels.clone();
+        let right = right.clone();
+        let tx = tx.clone();
+        let update = update_inbox_buttons.clone();
+        move |split| {
+            let collapsed = split.is_collapsed();
+            let showing_content = split.shows_content();
+            channels.navigation_state_changed(collapsed, showing_content);
+            update(split);
+            if should_close_inbox_on_return(
+                collapsed,
+                showing_content,
+                right.mode() == PanelMode::Inbox,
+            ) {
+                let _ = tx.send_blocking(Action::CloseRightPanel);
+            }
+        }
+    });
+    update_inbox_buttons(&split);
 
     // Collapse in two steps: the thread panel overlays the conversation first,
     // then the channel list folds into a navigation stack.
@@ -992,6 +1057,20 @@ fn build_session_ui(
         tx: tx.clone(),
     });
 
+    ui.place_dock(call_dock::dock_belongs_in_chat(
+        split.is_collapsed(),
+        split.shows_content(),
+    ));
+    split.connect_show_content_notify({
+        let ui = ui.clone();
+        move |split| {
+            ui.place_dock(call_dock::dock_belongs_in_chat(
+                split.is_collapsed(),
+                split.shows_content(),
+            ));
+        }
+    });
+
     // Below this the thread panel has to overlay rather than take a column.
     // `default-width` cannot answer that: a maximized or tiled window keeps the
     // size it would restore to, so a phone compositor left this reading 1320 and
@@ -1022,7 +1101,14 @@ fn build_session_ui(
     // navigated away from — then it belongs under the conversation.
     split.connect_collapsed_notify({
         let ui = ui.clone();
-        move |split| ui.place_dock(split.is_collapsed())
+        let update = update_inbox_buttons.clone();
+        move |split| {
+            ui.place_dock(call_dock::dock_belongs_in_chat(
+                split.is_collapsed(),
+                split.shows_content(),
+            ));
+            update(split);
+        }
     });
 
     // The debounce means the last few seconds would otherwise be lost, and
@@ -1031,6 +1117,10 @@ fn build_session_ui(
         let ui = ui.clone();
         move |window| {
             ui.save_snapshot();
+            if rhs::window_close_dismisses_inbox(&ui.right.mode()) {
+                ui.dispatch(Action::CloseRightPanel);
+                return glib::Propagation::Stop;
+            }
             // Closing the window must not tear the session down when the app
             // is meant to keep running: destroying it would drop the socket
             // and then the next activation would build a *second* session
@@ -1350,6 +1440,14 @@ impl Ui {
     /// Redraws only the message surfaces — used when something cosmetic lands,
     /// such as an avatar finishing its download.
     fn refresh_messages(self: &Rc<Self>) {
+        let inbox_count = {
+            let state = self.state.borrow();
+            state
+                .mentions
+                .len()
+                .max(state.unread_threads().max(0) as usize) as i64
+        };
+        self.channels.set_inbox_count(inbox_count);
         let actions = self.message_actions();
         self.chat.refresh(&self.state, &self.avatars, &actions);
         self.right.refresh(&self.state, &self.avatars, &actions);
@@ -1930,7 +2028,7 @@ impl Ui {
             MenuAction::NewCategory => self.new_category(),
             MenuAction::FocusSearch => self.channels.focus_search(),
             MenuAction::OpenInbox => self.open_inbox(),
-            MenuAction::ClosePanel => self.dispatch(Action::CloseRightPanel),
+            MenuAction::ClosePanel => self.escape_navigation(),
             MenuAction::NextUnread => self.step_unread(true),
             MenuAction::PreviousUnread => self.step_unread(false),
             MenuAction::LeaveTeam => self.leave_team(),
@@ -5357,6 +5455,35 @@ impl Ui {
         self.select_channel_inner(channel_id, false);
     }
 
+    fn escape_navigation(self: &Rc<Self>) {
+        use shortcuts::EscapeAction;
+        let action = {
+            let channel_open = self.state.borrow().current_channel.is_some();
+            shortcuts::escape_action(
+                self.right.mode() != PanelMode::Hidden,
+                channel_open,
+                self.split.is_collapsed(),
+                self.split.shows_content(),
+            )
+        };
+        match action {
+            EscapeAction::ClosePanel => self.dispatch(Action::CloseRightPanel),
+            EscapeAction::Home => {
+                self.save_draft();
+                self.state.borrow_mut().current_channel = None;
+                self.right.set_mode(PanelMode::Hidden);
+                self.overlay.set_show_sidebar(false);
+                self.split.set_show_content(true);
+                self.chat.set_loading(false);
+                self.refresh_messages();
+                self.refresh_call_ui();
+                self.schedule_snapshot();
+            }
+            EscapeAction::ShowChannels => self.split.set_show_content(false),
+            EscapeAction::None => {}
+        }
+    }
+
     fn select_channel_inner(self: &Rc<Self>, channel_id: String, from_post_jump: bool) {
         self.split.set_show_content(true);
         self.capture_scroll_anchor();
@@ -7056,9 +7183,9 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                                 st.feeds
                                     .entry(channel_id.clone())
                                     .or_insert_with(|| ChannelFeed::from_posts(posts));
-                                if st.current_channel.is_none() {
-                                    st.current_channel = Some(channel_id);
-                                }
+                                let current = st.current_channel.take();
+                                st.current_channel =
+                                    shortcuts::startup_channel(current, Some(channel_id));
                             }
                             ui.refresh_messages();
                             if let Some(anchor) = anchor {
@@ -7157,6 +7284,10 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
             ui.load_team_unreads();
             ui.preload_unread();
 
+            let initial_channel = shortcuts::startup_channel(
+                ui.state.borrow().current_channel.clone(),
+                initial_channel,
+            );
             if let Some(id) = initial_channel {
                 ui.dispatch(Action::SelectChannel(id));
             }

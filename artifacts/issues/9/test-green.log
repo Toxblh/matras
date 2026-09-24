@@ -1,0 +1,4 @@
+$ cargo test --offline -p matras --lib ui::sidebar::tests::inbox_button_moves_between_desktop_sidebar_and_mobile_content -- --exact
+running 1 test
+test ui::sidebar::tests::inbox_button_moves_between_desktop_sidebar_and_mobile_content ... ok
+test result: ok. 1 passed; 0 failed

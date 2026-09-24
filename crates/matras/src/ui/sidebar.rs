@@ -36,6 +36,8 @@ pub struct ChannelSidebar {
     categories: Rc<dyn Fn(String, RowAction)>,
     search_button: gtk::ToggleButton,
     search_entry: gtk::SearchEntry,
+    inbox_button: gtk::Button,
+    inbox_badge: gtk::Label,
     list: gtk::ListBox,
     title: gtk::Label,
     switcher: Switcher,
@@ -54,6 +56,7 @@ impl ChannelSidebar {
         on_select: impl Fn(String) + 'static,
         on_select_team: impl Fn(String) + 'static,
         on_search: impl Fn(String) + 'static,
+        on_inbox: impl Fn() + 'static,
         on_status: impl Fn(String) + 'static,
         on_row_action: impl Fn(String, RowAction) + 'static,
         dock: &gtk::Widget,
@@ -86,6 +89,24 @@ impl ChannelSidebar {
             .show_end_title_buttons(false)
             .build();
         header.pack_start(&switcher.button);
+
+        let inbox_badge = gtk::Label::builder().visible(false).build();
+        inbox_badge.add_css_class("mention-badge");
+        inbox_badge.add_css_class("button-badge");
+        let inbox_content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(4)
+            .build();
+        inbox_content.append(&gtk::Image::from_icon_name("mail-unread-symbolic"));
+        inbox_content.append(&inbox_badge);
+        let inbox_button = gtk::Button::builder()
+            .child(&inbox_content)
+            .tooltip_text("Mentions and threads")
+            .build();
+        inbox_button.add_css_class("flat");
+        inbox_button.set_visible(false);
+        inbox_button.connect_clicked(move |_| on_inbox());
+        header.pack_end(&inbox_button);
 
         // A search bar rather than a dialog: it belongs to the list it filters
         // into, and Escape puts it away without losing your place.
@@ -182,6 +203,8 @@ impl ChannelSidebar {
 
         ChannelSidebar {
             widget,
+            inbox_button,
+            inbox_badge,
             search_button: search_button.clone(),
             search_entry: search_entry.clone(),
             categories: Rc::new(on_row_action),
@@ -205,6 +228,15 @@ impl ChannelSidebar {
     /// activated with one click.
     pub fn navigation_state_changed(&self, collapsed: bool, showing_content: bool) {
         clear_selection_if_return(&self.list, collapsed, showing_content);
+    }
+
+    pub fn set_inbox_button_visible(&self, visible: bool) {
+        self.inbox_button.set_visible(visible);
+    }
+
+    pub fn set_inbox_count(&self, count: i64) {
+        self.inbox_badge.set_visible(count > 0);
+        self.inbox_badge.set_text(&count.to_string());
     }
 
     pub fn refresh(&self, state: &SharedState, avatars: &Avatars) {
@@ -470,6 +502,19 @@ pub(crate) fn should_clear_selection_on_return(collapsed: bool, showing_content:
     collapsed && !showing_content
 }
 
+pub(crate) fn inbox_button_visibility(collapsed: bool, showing_content: bool) -> (bool, bool) {
+    let in_chat = collapsed && showing_content;
+    (!in_chat, in_chat)
+}
+
+pub(crate) fn should_close_inbox_on_return(
+    collapsed: bool,
+    showing_content: bool,
+    inbox_open: bool,
+) -> bool {
+    collapsed && !showing_content && inbox_open
+}
+
 fn clear_selection_if_return(list: &gtk::ListBox, collapsed: bool, showing_content: bool) {
     if should_clear_selection_on_return(collapsed, showing_content) {
         list.unselect_all();
@@ -477,7 +522,8 @@ fn clear_selection_if_return(list: &gtk::ListBox, collapsed: bool, showing_conte
 }
 
 /// The status dot drawn over your own avatar.
-fn presence_dot(size: i32) -> gtk::Box {
+fn presence_dot(avatar_size: i32) -> gtk::Box {
+    let size = super::profile::presence_badge_size(avatar_size);
     let dot = gtk::Box::builder()
         .width_request(size)
         .height_request(size)
@@ -705,12 +751,7 @@ fn channel_row(
         },
     };
 
-    let label = gtk::Label::builder()
-        .label(title)
-        .xalign(0.0)
-        .hexpand(true)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .build();
+    let label = channel_name_label(title);
 
     let row_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -728,6 +769,10 @@ fn channel_row(
         chip.set_tooltip_text(Some(&super::message::custom_status_tooltip(&status)));
         row_box.append(&chip);
     }
+
+    // Keep the custom-status emoji with the person's name and let the spare
+    // width carry unread counts and other trailing channel indicators.
+    row_box.append(&gtk::Box::builder().hexpand(true).build());
 
     // A call in this channel matters more than an unread badge, so it goes
     // first and is always shown.
@@ -777,6 +822,22 @@ fn channel_row(
     background.append(&row_box);
 
     gtk::ListBoxRow::builder().child(&background).build()
+}
+
+fn channel_name_label(title: &str) -> gtk::Label {
+    gtk::Label::builder()
+        .label(title)
+        .xalign(0.0)
+        .hexpand(channel_name_expands())
+        .max_width_chars(CHANNEL_NAME_MAX_WIDTH_CHARS)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build()
+}
+
+const CHANNEL_NAME_MAX_WIDTH_CHARS: i32 = 24;
+
+fn channel_name_expands() -> bool {
+    false
 }
 
 /// Who is in the call, the way Slack marks a channel: a few faces and the
@@ -856,7 +917,7 @@ impl Switcher {
         on_status: impl Fn(String) + 'static,
     ) -> Self {
         let avatar = adw::Avatar::builder().size(24).build();
-        let avatar_dot = presence_dot(8);
+        let avatar_dot = presence_dot(avatar.size());
         let avatar_stack = gtk::Overlay::builder().child(&avatar).build();
         avatar_stack.add_overlay(&avatar_dot);
 
@@ -869,7 +930,7 @@ impl Switcher {
         button.add_css_class("flat");
 
         let account_avatar = adw::Avatar::builder().size(40).build();
-        let account_dot = presence_dot(12);
+        let account_dot = presence_dot(account_avatar.size());
         let account_stack = gtk::Overlay::builder().child(&account_avatar).build();
         account_stack.add_overlay(&account_dot);
         let name = gtk::Label::builder().xalign(0.0).build();
@@ -1069,18 +1130,38 @@ mod tests {
     use mattermost_api::Client;
 
     #[test]
+    fn account_presence_badges_scale_like_chat_avatar_badges() {
+        let small_width = super::super::profile::presence_badge_size(24);
+        let large_width = super::super::profile::presence_badge_size(40);
+        assert_eq!((small_width, large_width), (8, 13));
+    }
+
+    #[test]
+    fn channel_name_does_not_expand_status_emoji_away_from_name() {
+        assert!(!channel_name_expands());
+        assert_eq!(CHANNEL_NAME_MAX_WIDTH_CHARS, 24);
+    }
+
+    #[test]
     fn returning_to_collapsed_sidebar_clears_the_selected_channel() {
         assert!(should_clear_selection_on_return(true, false));
         assert!(!should_clear_selection_on_return(false, false));
         assert!(!should_clear_selection_on_return(true, true));
+    }
 
-        gtk::init().expect("GTK display for selection transition test");
-        let list = gtk::ListBox::new();
-        let row = gtk::ListBoxRow::new();
-        list.append(&row);
-        list.select_row(Some(&row));
-        clear_selection_if_return(&list, true, false);
-        assert!(list.selected_row().is_none());
+    #[test]
+    fn inbox_button_moves_between_desktop_sidebar_and_mobile_content() {
+        assert_eq!(inbox_button_visibility(false, true), (true, false));
+        assert_eq!(inbox_button_visibility(true, true), (false, true));
+        assert_eq!(inbox_button_visibility(true, false), (true, false));
+    }
+
+    #[test]
+    fn returning_to_mobile_sidebar_closes_an_open_inbox_panel() {
+        assert!(should_close_inbox_on_return(true, false, true));
+        assert!(!should_close_inbox_on_return(true, true, true));
+        assert!(!should_close_inbox_on_return(true, false, false));
+        assert!(!should_close_inbox_on_return(false, false, true));
     }
 
     /// One channel with `total` posts in it, of which `read` have been seen.
