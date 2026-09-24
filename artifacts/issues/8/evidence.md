@@ -26,5 +26,6 @@ The 360x720 screenshot was inspected: the compact action menu, rounded
 composer, and send control are visible within the window. The issue attachment
 is a 919x133 composer crop; 919x720 captures the full app at the same width.
 The final combined workspace suite passed; see
-[workspace-test.log](../workspace-test.log). The issue remains open until the
-changes land on the default branch.
+[workspace-test.log](../workspace-test.log). The issue was closed automatically by PR #16, merged as `2166a9c`.
+
+Issue closed automatically by PR #16, merged into `master` as `2166a9c`.

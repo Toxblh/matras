@@ -1,6 +1,6 @@
 # Issue #11: custom status у имени
 
-Issue: https://altlinux.space/toxblh/matras/issues/11 (open)
+Issue: https://altlinux.space/toxblh/matras/issues/11 (closed via PR #16)
 
 Custom-status emoji закреплено рядом с именем: имя канала ограничено разумной
 шириной, а свободное место остаётся за ним для статуса и trailing-индикаторов.

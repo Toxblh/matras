@@ -1,6 +1,6 @@
 # Issue #12: расположение панели звонка в мобильной навигации
 
-Issue: https://altlinux.space/toxblh/matras/issues/12 (open)
+Issue: https://altlinux.space/toxblh/matras/issues/12 (closed via PR #16)
 
 В свёрнутой навигации панель активного звонка следует за текущей страницей:
 она находится у списка, когда открыт список каналов, и у разговора, когда

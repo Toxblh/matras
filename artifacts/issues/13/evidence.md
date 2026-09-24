@@ -1,6 +1,6 @@
 # Issue #13: состояние кнопки поднятой руки
 
-Issue: https://altlinux.space/toxblh/matras/issues/13 (open)
+Issue: https://altlinux.space/toxblh/matras/issues/13 (closed via PR #16)
 
 Кнопка использует символ поднятой руки. Пока рука поднята, кнопка подсвечена и
 подсказка предлагает опустить её; после опускания возвращается flat-действие

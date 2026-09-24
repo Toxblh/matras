@@ -1,6 +1,6 @@
 # Issue #14: play-кнопка остаётся на видеопостере
 
-Issue: https://altlinux.space/toxblh/matras/issues/14 (open)
+Issue: https://altlinux.space/toxblh/matras/issues/14 (closed via PR #16)
 
 Постер ограничен шириной 420 px, но строка сообщения может быть шире.
 Overlay теперь выравнивается по началу poster clamp, поэтому центрированная

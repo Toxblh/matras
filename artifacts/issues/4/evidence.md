@@ -28,4 +28,4 @@ The same deterministic mention state was captured at PinePhone `360×720`,
 issue-specific `720×800`, and desktop `1320×840` in `matrix-*.png` and inspected
 at each size.
 
-No issue was closed or published; the fix is local and still requires landing on the default branch before resolution.
+Issue closed automatically by PR #16, merged into `master` as `2166a9c`.

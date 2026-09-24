@@ -41,5 +41,6 @@ The focused red/green test is complete. The final
 `cargo test --offline --workspace -- --test-threads=1` passed (140 Matras, 22
 API, 36 Calls, and doc-tests; see [workspace-test.log](../workspace-test.log));
 `cargo fmt --all -- --check` and `git diff --check` passed. The
-app has not been published, so the issue must remain open until the change
-reaches the default branch.
+the issue was closed automatically by PR #16, merged as `2166a9c`.
+
+Issue closed automatically by PR #16, merged into `master` as `2166a9c`.

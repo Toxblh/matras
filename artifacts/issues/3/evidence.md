@@ -1,6 +1,6 @@
 # Issue #3: собственный индикатор присутствия
 
-Issue: https://altlinux.space/toxblh/matras/issues/3 (open)
+Issue: https://altlinux.space/toxblh/matras/issues/3 (closed via PR #16)
 
 Индикатор на собственном аватаре теперь использует тот же расчёт размера, что и
 аватар в чате: 8 px на аватаре 24 px и 13 px на аватаре 40 px. До исправления

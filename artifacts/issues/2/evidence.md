@@ -1,6 +1,6 @@
 # Issue #2 evidence
 
-Issue: https://altlinux.space/toxblh/matras/issues/2 (open; 0 comments)
+Issue: https://altlinux.space/toxblh/matras/issues/2 (closed via PR #16)
 
 ## Reproduction and cause
 
@@ -38,5 +38,4 @@ automated test covers the selection transition.
 
 Forgejo attachment in the issue describes the visual sequence; live UI
 interaction was not automated. The screenshot shows the corrected narrow chat
-state rather than the return-and-reselect gesture itself. The change remains
-local until the complete issue batch is integrated.
+state rather than the return-and-reselect gesture itself. The fix was merged in PR #16 as `2166a9c`; the issue is closed.

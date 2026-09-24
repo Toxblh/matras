@@ -1,6 +1,6 @@
 # Issue #1: Неадаптивный интерфейс
 
-Issue: https://altlinux.space/toxblh/matras/issues/1 (open)
+Issue: https://altlinux.space/toxblh/matras/issues/1 (closed via PR #16)
 
 ## Reproduction and fix
 

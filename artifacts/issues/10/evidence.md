@@ -1,6 +1,6 @@
 # Issue #10 evidence
 
-Issue: https://altlinux.space/toxblh/matras/issues/10 (open; 0 comments)
+Issue: https://altlinux.space/toxblh/matras/issues/10 (closed via PR #16)
 
 ## Behavior
 

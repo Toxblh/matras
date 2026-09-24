@@ -25,5 +25,6 @@ The 360x720 screenshot was inspected and contains the placeholder with no
 selected feed. The issue attachment is a Fractal reference image rather than a
 Matras viewport, so 1024x720 is the chosen issue-specific full-window capture.
 The final combined workspace suite passed; see
-[workspace-test.log](../workspace-test.log). The issue remains open until the
-changes land on the default branch.
+[workspace-test.log](../workspace-test.log). The issue was closed automatically by PR #16, merged as `2166a9c`.
+
+Issue closed automatically by PR #16, merged into `master` as `2166a9c`.

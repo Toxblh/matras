@@ -24,4 +24,6 @@ capture below uses 784x720 so the full app is visible.
 The 360x720 screenshot was inspected: there is one close control in the title
 bar and no duplicate X beside the Inbox heading. The final combined workspace
 suite passed; see [workspace-test.log](../workspace-test.log). The issue remains
-open until the changes land on the default branch.
+closed automatically by PR #16, merged as `2166a9c`.
+
+Issue closed automatically by PR #16, merged into `master` as `2166a9c`.
