@@ -135,16 +135,18 @@ the URI to the live instance over D-Bus.
 
 ## Install
 
-A signed flatpak repository is published from this project's own CI. One click
-on the ref file adds the remote and installs the app; everything after that is
-an ordinary `flatpak update`:
+Flatpak is delivered as an OCI image from the Forgejo Container registry. Add
+the stable remote and install the app:
 
 ```sh
-flatpak install https://altlinux.space/toxblh/matras/raw/branch/flatpak/ru.toxblh.Matras.flatpakref
+flatpak remote-add --user --no-gpg-verify matras-oci \
+  'oci+https://altlinux.space/api/packages/toxblh/container#stable'
+flatpak install --user matras-oci ru.toxblh.Matras
+flatpak update --user ru.toxblh.Matras
 ```
 
-The runtime comes from Flathub, so that remote has to exist — the ref file
-points at it and flatpak will offer to add it.
+Flatpak selects x86_64 or aarch64 automatically. The GNOME runtime comes from
+Flathub. To install system-wide, omit `--user` from these commands.
 
 ## Building
 
@@ -250,15 +252,16 @@ signing secrets are configured, also uploads a signed APK.
 The CI workflows publish downloads to the [Matras Packages tab](https://altlinux.space/toxblh/matras/packages):
 
 - Signed Android arm64 APK: Generic package `matras-apk`.
-- x86_64 and aarch64 Flatpak bundles: Generic package `matras-flatpak`.
+- x86_64 and aarch64 Flatpak OCI images: Container packages
+  `ru.toxblh.matras-x86_64-stable` and `ru.toxblh.matras-aarch64-stable`.
 - ALT Sisyphus and p11 RPMs: ALT package `matras`, in separate `sisyphus` and
   `p11` groups. The RPM source is [matras.spec](matras.spec); its locked Rust
   dependencies are vendored by CI before the isolated Gear build.
 
 Forgejo packages belong to the `toxblh` account. After each upload,
 `build-aux/publish-package.sh` links the package to this repository so that it
-appears on the Matras Packages tab. The Flatpak bundles are snapshots; install
-from the `.flatpakref` above for automatic updates.
+appears on the Matras Packages tab. Install Flatpak from the OCI remote above
+so `flatpak update` checks the published `stable` image.
 
 To enable publishing, create a personal access token in
 [Forgejo Settings → Applications](https://altlinux.space/user/settings/applications)
@@ -269,66 +272,15 @@ Packages. Publishing the Android APK also requires the signing secrets listed
 in [the Android instructions](build-aux/android/README.md); unsigned APKs are
 kept only as workflow artifacts.
 
-## Publishing the flatpak
+## Publishing the Flatpak
 
-`.forgejo/workflows/flatpak.yml` builds the manifest in `build-aux/` on every
-push to `master` and force-pushes the resulting ostree repository to the
-`flatpak` branch of this repository. Forgejo's `raw/branch/flatpak` endpoint
-serves it as an ordinary HTTP flatpak remote. The branch is public so clients
-can fetch updates anonymously. CI pushes with Forgejo's built-in, short-lived
-`FORGEJO_TOKEN`, which can write to this repository; no deploy key is needed.
-
-Three Actions secrets on this repository sign the Flatpak repository:
-
-| Secret | Value |
-|---|---|
-| `FLATPAK_GPG_ID` | fingerprint of the signing key |
-| `FLATPAK_GPG_KEY_B64` | `gpg2 --export-secret-keys <fpr> \| base64 -w0` |
-| `FLATPAK_GPG_PASSPHRASE` | that key's passphrase |
-
-The signing key never enters a personal keyring: it lives as an exported
-blob beside its passphrase, and every publish — local or CI — imports it into
-a throwaway `GNUPGHOME` the same way.
-
-```sh
-~/.config/als-forgejo/matras-flatpak-key.b64   # FLATPAK_GPG_KEY_B64
-~/.config/als-forgejo/matras-flatpak-pass      # FLATPAK_GPG_PASSPHRASE
-```
-
-That homedir also gets a stub pinentry, because ostree signs through gpgme,
-which cannot hand a passphrase to gpg-agent itself, and the build image has
-no pinentry to prompt with.
-
-The workflow writes `ru.toxblh.Matras.flatpakref` into the published repository
-itself, with the public key embedded, so the install link above always carries
-the key that signed what it points at. The `.flatpak` bundles are also uploaded
-to Matras Packages. They embed the same remote URL and public key, so installing
-a bundle also configures the signed branch for later updates. A successful CI
-publish makes the update available; `flatpak update` installs it, while automatic
-installation by GNOME Software or another desktop updater depends on its settings.
-
-The old `toxblh/flatpak` repository publishes a signed redirect to the new
-branch. Existing installations should learn the new URL on their next
-`flatpak update` while the old repository is still online. To verify the
-migration, run `flatpak remotes --show-details`. If a client does not follow
-the redirect, change its remote URL manually before the old repository is
-removed:
-
-```sh
-flatpak remote-modify --user --url=https://altlinux.space/toxblh/matras/raw/branch/flatpak matras-origin
-flatpak update --user ru.toxblh.Matras
-```
-
-For a system installation, omit `--user`. The signing key is unchanged.
-The old `FLATPAK_REPO_SSH_KEY_B64` and `FLATPAK_REPO_KNOWN_HOSTS` secrets are
-used by the one-time redirect workflow to publish into `toxblh/flatpak`.
-
-The same script builds locally, into `.flatpak-repo`:
-
-```sh
-build-aux/publish-flatpak.sh
-flatpak install --user .flatpak-repo ru.toxblh.Matras
-```
+`.forgejo/workflows/flatpak.yml` builds a Flatpak OCI image for each supported
+architecture and publishes `stable` plus `oci-test` tags through Forgejo's
+Container registry. `build-aux/publish-oci-flatpak.py` uploads the OCI blobs and
+manifest directly to the registry. The `PACKAGES_TOKEN` Actions secret needs
+`write:package` scope. The published registry index carries Flatpak ref and
+commit labels, so clients can discover and update the app through
+`flatpak update`.
 
 ## Licence
 

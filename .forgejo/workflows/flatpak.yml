@@ -5,7 +5,7 @@ on:
     branches: [master]
   workflow_dispatch:
 
-# A stale build must never finish last and overwrite a newer ostree commit.
+# Serialize image publication so an older build cannot move a tag backwards.
 concurrency:
   group: flatpak-publish
   cancel-in-progress: false
@@ -45,12 +45,8 @@ jobs:
           flatpak install -y --noninteractive flathub \
             org.freedesktop.Sdk.Extension.rust-stable//25.08
 
-      - name: Build, sign and publish
-        env:
-          FLATPAK_GPG_ID: ${{ secrets.FLATPAK_GPG_ID }}
-          FLATPAK_GPG_KEY_B64: ${{ secrets.FLATPAK_GPG_KEY_B64 }}
-          FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
-        run: build-aux/publish-flatpak.sh --publish
+      - name: Build Flatpak repository
+        run: build-aux/publish-flatpak.sh
 
       - name: Publish Flatpak OCI image
         env:
@@ -58,45 +54,15 @@ jobs:
         run: |
           arch=$(flatpak --default-arch)
           image="Matras-$arch.oci"
-          ref=.flatpak-repo/ru.toxblh.Matras.flatpakref
-          repo_url=$(sed -n 's/^Url=//p' "$ref")
-          public_key=$(mktemp)
-          trap 'rm -f "$public_key"' EXIT
-          sed -n 's/^GPGKey=//p' "$ref" | base64 -d > "$public_key"
           flatpak build-bundle --oci --arch="$arch" \
-            --repo-url="$repo_url" --gpg-keys="$public_key" \
             --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
             .flatpak-repo "$image" ru.toxblh.Matras stable
           python3 build-aux/publish-oci-flatpak.py "$arch" "$image" stable oci-test
 
-      - name: Publish bundle to Matras Packages
-        env:
-          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
-        run: |
-          if [ -z "$PACKAGES_TOKEN" ]; then
-            echo 'Skipping Packages upload: add the PACKAGES_TOKEN secret'
-            exit 0
-          fi
-          arch=$(flatpak --default-arch)
-          bundle="Matras-$arch.flatpak"
-          ref=.flatpak-repo/ru.toxblh.Matras.flatpakref
-          repo_url=$(sed -n 's/^Url=//p' "$ref")
-          test -n "$repo_url"
-          public_key=$(mktemp)
-          trap 'rm -f "$public_key"' EXIT
-          sed -n 's/^GPGKey=//p' "$ref" | base64 -d > "$public_key"
-          test -s "$public_key"
-          flatpak build-bundle --arch="$arch" \
-            --repo-url="$repo_url" --gpg-keys="$public_key" \
-            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-            .flatpak-repo "$bundle" ru.toxblh.Matras stable
-          version="g${GITHUB_SHA:0:12}-r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
-          build-aux/publish-package.sh generic matras-flatpak "$version" "$bundle"
-
   publish-aarch64:
-    # Not a matrix: both jobs force-push the same ostree repository, so the
-    # second has to start from what the first published, and a matrix would
-    # run them at once.
+    # Keep the ARM image build after x86 so both architectures publish from
+    # the same source revision and their independent registry tags advance
+    # together.
     needs: publish
     if: github.ref == 'refs/heads/master'
     # A self-hosted arm64 runner; the pinned digest is a multi-arch index, so
@@ -133,12 +99,8 @@ jobs:
           flatpak install -y --noninteractive flathub \
             org.freedesktop.Sdk.Extension.rust-stable//25.08
 
-      - name: Build, sign and publish
-        env:
-          FLATPAK_GPG_ID: ${{ secrets.FLATPAK_GPG_ID }}
-          FLATPAK_GPG_KEY_B64: ${{ secrets.FLATPAK_GPG_KEY_B64 }}
-          FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
-        run: build-aux/publish-flatpak.sh --publish
+      - name: Build Flatpak repository
+        run: build-aux/publish-flatpak.sh
 
       - name: Publish Flatpak OCI image
         env:
@@ -146,37 +108,7 @@ jobs:
         run: |
           arch=$(flatpak --default-arch)
           image="Matras-$arch.oci"
-          ref=.flatpak-repo/ru.toxblh.Matras.flatpakref
-          repo_url=$(sed -n 's/^Url=//p' "$ref")
-          public_key=$(mktemp)
-          trap 'rm -f "$public_key"' EXIT
-          sed -n 's/^GPGKey=//p' "$ref" | base64 -d > "$public_key"
           flatpak build-bundle --oci --arch="$arch" \
-            --repo-url="$repo_url" --gpg-keys="$public_key" \
             --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
             .flatpak-repo "$image" ru.toxblh.Matras stable
           python3 build-aux/publish-oci-flatpak.py "$arch" "$image" stable oci-test
-
-      - name: Publish bundle to Matras Packages
-        env:
-          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
-        run: |
-          if [ -z "$PACKAGES_TOKEN" ]; then
-            echo 'Skipping Packages upload: add the PACKAGES_TOKEN secret'
-            exit 0
-          fi
-          arch=$(flatpak --default-arch)
-          bundle="Matras-$arch.flatpak"
-          ref=.flatpak-repo/ru.toxblh.Matras.flatpakref
-          repo_url=$(sed -n 's/^Url=//p' "$ref")
-          test -n "$repo_url"
-          public_key=$(mktemp)
-          trap 'rm -f "$public_key"' EXIT
-          sed -n 's/^GPGKey=//p' "$ref" | base64 -d > "$public_key"
-          test -s "$public_key"
-          flatpak build-bundle --arch="$arch" \
-            --repo-url="$repo_url" --gpg-keys="$public_key" \
-            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-            .flatpak-repo "$bundle" ru.toxblh.Matras stable
-          version="g${GITHUB_SHA:0:12}-r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
-          build-aux/publish-package.sh generic matras-flatpak "$version" "$bundle"
