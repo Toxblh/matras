@@ -14,8 +14,9 @@ use crate::avatars::Avatars;
 use crate::state::SharedState;
 use crate::ui::message::{self, MessageActions, RowOptions};
 
-const COMPOSER_MIN_CONTENT_WIDTH: i32 = 1;
-const COMPOSER_MAX_CONTENT_HEIGHT: i32 = 40;
+pub(super) const COMPOSER_MIN_CONTENT_HEIGHT: i32 = 28;
+const COMPOSER_SINGLE_LINE_HEIGHT: i32 = COMPOSER_MIN_CONTENT_HEIGHT;
+pub(super) const COMPOSER_MAX_CONTENT_HEIGHT: i32 = 108;
 const COMPOSER_OPTIONS_BUTTON_WIDTH: i32 = 34;
 const COMPOSER_SEND_ICON: &str = "mail-send-symbolic";
 
@@ -25,6 +26,11 @@ pub(super) fn scroll_trace_enabled() -> bool {
         std::env::var("MATRAS_SCROLL_TRACE")
             .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
     })
+}
+
+pub(super) fn composer_content_height(lines: i32) -> i32 {
+    (COMPOSER_MIN_CONTENT_HEIGHT + lines.saturating_sub(1) * 20)
+        .clamp(COMPOSER_MIN_CONTENT_HEIGHT, COMPOSER_MAX_CONTENT_HEIGHT)
 }
 
 /// Everything the conversation pane reports back to the action loop. A struct
@@ -587,14 +593,14 @@ impl ChatView {
         let entry = gtk::TextView::builder()
             .wrap_mode(gtk::WrapMode::WordChar)
             .accepts_tab(false)
-            .top_margin(8)
-            .bottom_margin(8)
+            .height_request(COMPOSER_SINGLE_LINE_HEIGHT)
+            .top_margin(4)
+            .bottom_margin(4)
             .left_margin(8)
             .right_margin(8)
             .build();
 
         let entry_frame = build_composer_frame(&entry);
-        entry_frame.add_css_class("card");
         entry_frame.add_css_class("composer-entry");
 
         let send = gtk::Button::builder()
@@ -749,7 +755,10 @@ impl ChatView {
         let restoring = Rc::new(RefCell::new(false));
         entry.buffer().connect_changed({
             let restoring = restoring.clone();
+            let entry_frame = entry_frame.clone();
             move |buffer| {
+                let lines = buffer.line_count();
+                entry_frame.set_height_request(composer_content_height(lines));
                 // Restoring a draft is not typing, and must not be reported as
                 // either a keystroke or a fresh draft.
                 if *restoring.borrow() {
@@ -1814,18 +1823,8 @@ impl ChatView {
     }
 }
 
-fn build_composer_frame(entry: &gtk::TextView) -> gtk::ScrolledWindow {
-    gtk::ScrolledWindow::builder()
-        .hexpand(true)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        // The TextView's content can have a wide natural minimum. Let the
-        // horizontal composer share the pane width instead of demanding it.
-        .min_content_width(COMPOSER_MIN_CONTENT_WIDTH)
-        .min_content_height(40)
-        .max_content_height(COMPOSER_MAX_CONTENT_HEIGHT)
-        .propagate_natural_height(true)
-        .child(entry)
-        .build()
+fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
+    gtk::Frame::builder().hexpand(true).child(entry).build()
 }
 
 /// The compact composer menu keeps attachment, scheduling, and priority
@@ -2100,13 +2099,12 @@ mod tests {
     }
 
     #[test]
-    fn composer_entry_has_a_small_intrinsic_width_for_narrow_windows() {
-        assert_eq!(COMPOSER_MIN_CONTENT_WIDTH, 1);
-    }
-
-    #[test]
     fn composer_is_one_line_high_and_uses_a_clear_send_affordance() {
-        assert_eq!(COMPOSER_MAX_CONTENT_HEIGHT, 40);
+        assert_eq!(COMPOSER_SINGLE_LINE_HEIGHT, 28);
+        assert_eq!(COMPOSER_MAX_CONTENT_HEIGHT, 108);
+        assert_eq!(composer_content_height(1), 28);
+        assert_eq!(composer_content_height(2), 48);
+        assert_eq!(composer_content_height(99), 108);
         assert_eq!(COMPOSER_SEND_ICON, "mail-send-symbolic");
     }
 

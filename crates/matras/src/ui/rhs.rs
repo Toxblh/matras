@@ -14,8 +14,10 @@ use mattermost_api::models::{Millis, Post};
 
 use crate::avatars::Avatars;
 use crate::state::{ChannelFeed, SharedState};
-use crate::ui::chat::post_revision;
+use crate::ui::chat::{composer_content_height, post_revision};
 use crate::ui::message::{self, MessageActions, RowOptions};
+
+const THREAD_COMPOSER_SINGLE_LINE_HEIGHT: i32 = 28;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PanelMode {
@@ -31,12 +33,19 @@ pub enum PanelMode {
 /// Whether the panel needs its own close control in addition to the window
 /// close button.
 pub fn explicit_close_visible(mode: &PanelMode) -> bool {
-    !matches!(mode, PanelMode::Inbox)
+    !matches!(mode, PanelMode::Inbox | PanelMode::Thread(_))
 }
 
 /// Whether a window close request should dismiss the inbox panel first.
-pub fn window_close_dismisses_inbox(mode: &PanelMode) -> bool {
-    matches!(mode, PanelMode::Inbox)
+pub fn window_close_dismisses_panel(mode: &PanelMode) -> bool {
+    matches!(mode, PanelMode::Inbox | PanelMode::Thread(_))
+}
+
+/// Threads become an overlay when the window cannot comfortably hold three
+/// panes. The live width is also checked because a panel can open before the
+/// first breakpoint notification has arrived.
+pub fn panel_should_overlay(narrow: bool, window_width: i32, mode: &PanelMode) -> bool {
+    narrow || window_width < 1200 || matches!(mode, PanelMode::Inbox | PanelMode::Search(_))
 }
 
 pub struct RightPanel {
@@ -158,20 +167,18 @@ impl RightPanel {
         let thread_entry = gtk::TextView::builder()
             .wrap_mode(gtk::WrapMode::WordChar)
             .accepts_tab(false)
-            .top_margin(8)
-            .bottom_margin(8)
+            .hexpand(true)
+            .height_request(THREAD_COMPOSER_SINGLE_LINE_HEIGHT)
+            .top_margin(4)
+            .bottom_margin(4)
             .left_margin(8)
             .right_margin(8)
             .build();
-        let entry_frame = gtk::ScrolledWindow::builder()
+        let entry_frame = gtk::Frame::builder()
             .hexpand(true)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .min_content_height(40)
-            .max_content_height(140)
-            .propagate_natural_height(true)
             .child(&thread_entry)
             .build();
-        entry_frame.add_css_class("card");
+        entry_frame.add_css_class("thread-composer-entry");
 
         let send = gtk::Button::builder()
             .icon_name("document-send-symbolic")
@@ -230,7 +237,10 @@ impl RightPanel {
         thread_entry.buffer().connect_changed({
             let restoring = restoring.clone();
             let on_draft = Rc::new(on_draft);
-            move |_| {
+            let entry_frame = entry_frame.clone();
+            move |buffer| {
+                let lines = buffer.line_count();
+                entry_frame.set_height_request(composer_content_height(lines));
                 if !*restoring.borrow() {
                     on_draft();
                 }
@@ -966,16 +976,49 @@ mod inbox_close_tests {
     }
 
     #[test]
+    fn a_thread_uses_only_the_window_close_control() {
+        assert!(!explicit_close_visible(&PanelMode::Thread("post".into())));
+    }
+
+    #[test]
     fn a_window_close_dismisses_an_open_inbox() {
-        assert!(window_close_dismisses_inbox(&PanelMode::Inbox));
+        assert!(window_close_dismisses_panel(&PanelMode::Inbox));
+        assert!(window_close_dismisses_panel(&PanelMode::Thread(
+            "post".into()
+        )));
     }
 
     #[test]
     fn closing_another_panel_is_left_to_window_background_mode() {
-        assert!(!window_close_dismisses_inbox(&PanelMode::Hidden));
-        assert!(!window_close_dismisses_inbox(&PanelMode::Thread(
+        assert!(!window_close_dismisses_panel(&PanelMode::Hidden));
+        assert!(!window_close_dismisses_panel(&PanelMode::Search(
             "post".into()
         )));
+    }
+}
+
+#[cfg(test)]
+mod panel_width_tests {
+    use super::*;
+
+    #[test]
+    fn thread_panels_overlay_at_phone_and_tablet_widths_even_before_breakpoints_fire() {
+        let thread = PanelMode::Thread("post".into());
+        assert!(panel_should_overlay(false, 360, &thread));
+        assert!(panel_should_overlay(false, 720, &thread));
+        assert!(panel_should_overlay(true, 1320, &thread));
+        assert!(!panel_should_overlay(false, 1320, &thread));
+    }
+
+    #[test]
+    fn inbox_and_search_always_overlay() {
+        assert!(panel_should_overlay(false, 1320, &PanelMode::Inbox));
+        assert!(panel_should_overlay(
+            false,
+            1320,
+            &PanelMode::Search("x".into())
+        ));
+        assert_eq!(THREAD_COMPOSER_SINGLE_LINE_HEIGHT, 28);
     }
 }
 

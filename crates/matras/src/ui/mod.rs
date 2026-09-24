@@ -53,7 +53,10 @@ use call_dock::CallDock;
 use chat::ChatView;
 use message::{MessageActions, PostAction};
 use rhs::{PanelMode, RightPanel};
-use sidebar::{inbox_button_visibility, should_close_inbox_on_return, ChannelSidebar, RowAction};
+use sidebar::{
+    inbox_button_visibility, inbox_requires_chat_navigation, should_close_inbox_on_return,
+    ChannelSidebar, RowAction,
+};
 
 /// The websocket prefix of <https://github.com/Toxblh/mattermost-reactions-notify-plugin>,
 /// which notifies you about reactions to your own posts.
@@ -655,7 +658,17 @@ pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
         }
     }
     ui.refresh_all();
-    if std::env::var_os("MATRAS_DEMO_OPEN_MENTION").is_some() {
+    if std::env::var_os("MATRAS_DEMO_CLICK_SIDEBAR_INBOX").is_some() {
+        glib::timeout_add_local_once(std::time::Duration::from_millis(200), {
+            let ui = ui.clone();
+            move || ui.channels.activate_inbox_button()
+        });
+    } else if std::env::var_os("MATRAS_DEMO_OPEN_THREAD").is_some() {
+        glib::timeout_add_local_once(std::time::Duration::from_millis(200), {
+            let ui = ui.clone();
+            move || ui.open_thread("p-5".into())
+        });
+    } else if std::env::var_os("MATRAS_DEMO_OPEN_MENTION").is_some() {
         let mention = ui
             .state
             .borrow()
@@ -817,7 +830,7 @@ fn build_session_ui(
         .content(&chat.widget)
         .sidebar(&right.widget)
         .show_sidebar(false)
-        .min_sidebar_width(320.0)
+        .min_sidebar_width(280.0)
         .max_sidebar_width(460.0)
         .sidebar_width_fraction(0.30)
         .build();
@@ -1117,7 +1130,7 @@ fn build_session_ui(
         let ui = ui.clone();
         move |window| {
             ui.save_snapshot();
-            if rhs::window_close_dismisses_inbox(&ui.right.mode()) {
+            if rhs::window_close_dismisses_panel(&ui.right.mode()) {
                 ui.dispatch(Action::CloseRightPanel);
                 return glib::Propagation::Stop;
             }
@@ -5200,8 +5213,8 @@ impl Ui {
     /// dismiss, so it always overlays — pushing the conversation aside for it
     /// would be a heavier gesture than the content deserves.
     fn refresh_panel_mode(&self) {
-        let overlays = self.narrow.get()
-            || matches!(self.right.mode(), PanelMode::Inbox | PanelMode::Search(_));
+        let overlays =
+            rhs::panel_should_overlay(self.narrow.get(), self.window.width(), &self.right.mode());
         self.overlay.set_collapsed(overlays);
     }
 
@@ -5728,6 +5741,13 @@ impl Ui {
         }
         self.refresh_thread_panel();
 
+        // The demo already carries the complete thread. Do not ask the fake
+        // demo endpoint for it: an expected network failure would cover the
+        // UI with a toast and make a state screenshot misleading.
+        if std::env::var_os("MATRAS_DEMO").is_some() {
+            return;
+        }
+
         // Always refetch. A thread we opened earlier may have grown, and the
         // root's reply count is not enough to tell which replies we hold.
         let (client, crt) = {
@@ -5786,6 +5806,9 @@ impl Ui {
     }
 
     fn open_inbox(self: &Rc<Self>) {
+        if inbox_requires_chat_navigation(self.split.is_collapsed(), self.split.shows_content()) {
+            self.split.set_show_content(true);
+        }
         self.right.set_mode(PanelMode::Inbox);
         self.refresh_panel_mode();
         self.overlay.set_show_sidebar(true);
@@ -5800,7 +5823,9 @@ impl Ui {
         }
 
         self.refresh_messages();
-        self.load_inbox();
+        if std::env::var_os("MATRAS_DEMO").is_none() {
+            self.load_inbox();
+        }
     }
 
     /// Fetches recent mentions and the thread inbox for the current team.

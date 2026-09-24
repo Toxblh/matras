@@ -9,8 +9,16 @@
 /* The editor is a compact, rounded entry while remaining scrollable for
    multiline Shift+Enter drafts. */
 .composer-entry,
-.composer-entry textview {
+.thread-composer-entry {
+  background-color: @view_bg_color;
+  border: 1px solid alpha(@window_fg_color, 0.16);
   border-radius: 12px;
+  padding: 0;
+}
+
+.composer-entry textview,
+.thread-composer-entry textview {
+  min-height: 26px;
 }
 
 /* ── channel list ──────────────────────────────────────────────────────

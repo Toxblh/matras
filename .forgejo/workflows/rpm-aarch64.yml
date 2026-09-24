@@ -1,0 +1,51 @@
+name: rpm-aarch64
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: als-huge
+    timeout-minutes: 180
+    container:
+      # QEMU is enabled in this image; hasher-unshare builds for aarch64 on
+      # the shared x86_64 runner without requiring a dedicated ARM runner.
+      image: altlinux.space/alt-hub/sisyphus/flatpak-builder@sha256:10d7f96f783a84cfbd89207d28a701de82fb7b893ab2bd586d406a6098890f04
+      options: --platform linux/arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Vendor locked Rust dependencies
+        run: |
+          apt-get update
+          apt-get install -y rust rust-cargo
+          mkdir -p .cargo
+          cargo vendor --locked vendor > .cargo/config.toml
+          release="alt1.sisyphus.aarch64.g${GITHUB_SHA:0:12}.r${GITHUB_RUN_ID}"
+          sed -i "s/^Release: alt1$/Release: $release/" matras.spec
+          sed -i "s/ 0.1.0-alt1$/ 0.1.0-$release/" matras.spec
+
+      - name: Build aarch64 RPM
+        run: |
+          gear-hsh --commit --no-sisyphus-check=gpg,packager
+          mkdir -p rpm-artifacts
+          find -L ~/hasher/repo/aarch64/RPMS.hasher -type f \
+            -name '*.rpm' ! -name '*debuginfo*.rpm' ! -name '*.src.rpm' \
+            -exec cp {} rpm-artifacts/ \;
+          test -n "$(find rpm-artifacts -name '*.rpm' -print -quit)"
+
+      - name: Publish aarch64 RPM to Matras Packages
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$PACKAGES_TOKEN" ]; then
+            echo 'Skipping Packages upload: add the PACKAGES_TOKEN secret'
+            exit 0
+          fi
+          PACKAGES_ALT_GROUP=sisyphus-aarch64 \
+            build-aux/publish-package.sh alt rpm-artifacts/*.rpm

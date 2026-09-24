@@ -179,7 +179,11 @@ pub async fn clear_async() {
 
 /// The stored session from the plaintext fallback, if there is one.
 pub fn load() -> Option<(String, String)> {
-    let raw = fs::read_to_string(path()).ok()?;
+    load_from(&path())
+}
+
+fn load_from(file: &std::path::Path) -> Option<(String, String)> {
+    let raw = fs::read_to_string(file).ok()?;
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let server = v.get("server")?.as_str()?.to_string();
     let token = v.get("token")?.as_str()?.to_string();
@@ -193,13 +197,12 @@ pub fn load() -> Option<(String, String)> {
 /// able to write the file is a reason to sign in again next launch, not a
 /// reason to interrupt a session that is otherwise working.
 pub fn save(server: &str, token: &str) {
-    if let Err(e) = write(server, token) {
+    if let Err(e) = write_to(&path(), server, token) {
         tracing::warn!("could not save the session: {e}");
     }
 }
 
-fn write(server: &str, token: &str) -> std::io::Result<()> {
-    let file = path();
+fn write_to(file: &std::path::Path, server: &str, token: &str) -> std::io::Result<()> {
     let dir = file.parent().expect("session path always has a parent");
     fs::create_dir_all(dir)?;
     // The token would otherwise sit in a directory anyone can list.
@@ -223,7 +226,11 @@ fn write(server: &str, token: &str) -> std::io::Result<()> {
 
 /// Forgets the plaintext fallback.
 pub fn clear_file() {
-    match fs::remove_file(path()) {
+    clear_file_at(&path());
+}
+
+fn clear_file_at(file: &std::path::Path) {
+    match fs::remove_file(file) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => tracing::warn!("could not clear the session: {e}"),
@@ -236,28 +243,31 @@ mod tests {
 
     #[test]
     fn round_trips_and_is_not_readable_by_anyone_else() {
-        // `path()` follows XDG, so point it somewhere disposable.
         let dir = std::env::temp_dir().join(format!("matras-session-test-{}", std::process::id()));
-        // SAFETY: single-threaded test, before any other thread reads the env.
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", &dir) };
+        let _ = fs::remove_dir_all(&dir);
+        let file = dir.join(crate::APP_ID).join("session.json");
 
-        assert_eq!(load(), None, "nothing stored yet");
+        assert_eq!(load_from(&file), None, "nothing stored yet");
 
-        save("https://mm.example.com", "tok-1");
+        write_to(&file, "https://mm.example.com", "tok-1").unwrap();
         assert_eq!(
-            load(),
+            load_from(&file),
             Some(("https://mm.example.com".into(), "tok-1".into()))
         );
 
-        let mode = fs::metadata(path()).unwrap().permissions().mode() & 0o777;
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "the token must not be world-readable");
 
-        save("https://mm.example.com", "tok-2");
-        assert_eq!(load().unwrap().1, "tok-2", "save replaces, never appends");
+        write_to(&file, "https://mm.example.com", "tok-2").unwrap();
+        assert_eq!(
+            load_from(&file).unwrap().1,
+            "tok-2",
+            "save replaces, never appends"
+        );
 
-        clear_file();
-        assert_eq!(load(), None);
-        clear_file(); // clearing twice is not an error
+        clear_file_at(&file);
+        assert_eq!(load_from(&file), None);
+        clear_file_at(&file); // clearing twice is not an error
 
         let _ = fs::remove_dir_all(&dir);
     }

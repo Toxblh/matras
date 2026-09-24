@@ -21,6 +21,7 @@ use crate::avatars::Avatars;
 use crate::state::SharedState;
 
 const HAND_ICON_NAME: &str = "hand-openyay-symbolic";
+const CALL_ACTIVE_CONTROL_CLASS: &str = "accent";
 
 pub(crate) fn dock_belongs_in_chat(collapsed: bool, showing_content: bool) -> bool {
     collapsed && showing_content
@@ -271,6 +272,24 @@ impl CallDock {
     pub fn show_demo_preview(&self, hand_raised: bool) {
         self.title.set_text("Sara Okafor is talking");
         self.subtitle.set_text("Development · 3 in the call");
+        set_state(
+            &self.mute,
+            true,
+            ("audio-input-microphone-symbolic", "Mute"),
+            CALL_ACTIVE_CONTROL_CLASS,
+        );
+        set_state(
+            &self.screen,
+            true,
+            ("video-display-symbolic", "Stop sharing your screen"),
+            CALL_ACTIVE_CONTROL_CLASS,
+        );
+        set_state(
+            &self.camera,
+            true,
+            ("camera-web-symbolic", "Turn the camera off"),
+            CALL_ACTIVE_CONTROL_CLASS,
+        );
         let (icon, tooltip, flat) = hand_button_appearance(hand_raised);
         set_state(&self.hand, hand_raised, (icon, tooltip), "suggested-action");
         if flat {
@@ -345,7 +364,7 @@ impl CallDock {
             } else {
                 ("audio-input-microphone-symbolic", "Mute")
             },
-            "suggested-action",
+            CALL_ACTIVE_CONTROL_CLASS,
         );
         set_state(
             &self.screen,
@@ -358,7 +377,7 @@ impl CallDock {
                     "Share your screen"
                 },
             ),
-            "suggested-action",
+            CALL_ACTIVE_CONTROL_CLASS,
         );
         set_state(
             &self.camera,
@@ -371,7 +390,7 @@ impl CallDock {
                     "Turn the camera on"
                 },
             ),
-            "suggested-action",
+            CALL_ACTIVE_CONTROL_CLASS,
         );
         // Your own hand: the button reflects whether it is up, since you
         // cannot see yourself in the roster otherwise.
@@ -626,6 +645,16 @@ mod hand_button_tests {
             hand_button_appearance(false),
             ("hand-openyay-symbolic", "Raise your hand", true)
         );
+    }
+}
+
+#[cfg(test)]
+mod active_control_tests {
+    use super::CALL_ACTIVE_CONTROL_CLASS;
+
+    #[test]
+    fn active_call_controls_use_a_coloured_icon_without_a_white_suggested_action_fill() {
+        assert_eq!(CALL_ACTIVE_CONTROL_CLASS, "accent");
     }
 }
 

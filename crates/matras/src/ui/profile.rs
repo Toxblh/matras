@@ -241,7 +241,11 @@ pub fn with_presence(avatar: &adw::Avatar, presence: Presence) -> gtk::Overlay {
 }
 
 pub(super) fn presence_badge_size(avatar_size: i32) -> i32 {
-    (avatar_size / 3).clamp(8, 14)
+    (avatar_size / 3).clamp(10, 14)
+}
+
+pub(super) fn header_presence_badge_size(avatar_size: i32) -> i32 {
+    presence_badge_size(avatar_size).max(12)
 }
 
 fn presence_label(presence: Presence) -> &'static str {

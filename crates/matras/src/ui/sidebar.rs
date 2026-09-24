@@ -234,6 +234,11 @@ impl ChannelSidebar {
         self.inbox_button.set_visible(visible);
     }
 
+    /// Emits the inbox control's real click signal for a deterministic demo.
+    pub fn activate_inbox_button(&self) {
+        self.inbox_button.emit_clicked();
+    }
+
     pub fn set_inbox_count(&self, count: i64) {
         self.inbox_badge.set_visible(count > 0);
         self.inbox_badge.set_text(&count.to_string());
@@ -505,6 +510,12 @@ pub(crate) fn should_clear_selection_on_return(collapsed: bool, showing_content:
 pub(crate) fn inbox_button_visibility(collapsed: bool, showing_content: bool) -> (bool, bool) {
     let in_chat = collapsed && showing_content;
     (!in_chat, in_chat)
+}
+
+/// The inbox panel lives in the conversation page, so a phone must navigate
+/// there before showing it when the channel list is currently on screen.
+pub(crate) fn inbox_requires_chat_navigation(collapsed: bool, showing_content: bool) -> bool {
+    collapsed && !showing_content
 }
 
 pub(crate) fn should_close_inbox_on_return(
@@ -918,6 +929,8 @@ impl Switcher {
     ) -> Self {
         let avatar = adw::Avatar::builder().size(24).build();
         let avatar_dot = presence_dot(avatar.size());
+        let header_dot = super::profile::header_presence_badge_size(avatar.size());
+        avatar_dot.set_size_request(header_dot, header_dot);
         let avatar_stack = gtk::Overlay::builder().child(&avatar).build();
         avatar_stack.add_overlay(&avatar_dot);
 
@@ -1133,7 +1146,13 @@ mod tests {
     fn account_presence_badges_scale_like_chat_avatar_badges() {
         let small_width = super::super::profile::presence_badge_size(24);
         let large_width = super::super::profile::presence_badge_size(40);
-        assert_eq!((small_width, large_width), (8, 13));
+        assert_eq!((small_width, large_width), (10, 13));
+    }
+
+    #[test]
+    fn the_header_account_presence_badge_is_nearly_as_large_as_the_sidebar_badge() {
+        assert_eq!(super::super::profile::header_presence_badge_size(24), 12);
+        assert_eq!(super::super::profile::presence_badge_size(40), 13);
     }
 
     #[test]
@@ -1154,6 +1173,13 @@ mod tests {
         assert_eq!(inbox_button_visibility(false, true), (true, false));
         assert_eq!(inbox_button_visibility(true, true), (false, true));
         assert_eq!(inbox_button_visibility(true, false), (true, false));
+    }
+
+    #[test]
+    fn opening_inbox_from_the_mobile_sidebar_returns_to_the_chat_page() {
+        assert!(inbox_requires_chat_navigation(true, false));
+        assert!(!inbox_requires_chat_navigation(true, true));
+        assert!(!inbox_requires_chat_navigation(false, false));
     }
 
     #[test]
