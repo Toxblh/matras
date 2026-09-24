@@ -7,13 +7,12 @@ on:
 
 jobs:
   build:
-    runs-on: als-huge
+    runs-on: aarch64
     timeout-minutes: 180
     container:
-      # QEMU is enabled in this image; hasher-unshare builds for aarch64 on
-      # the shared x86_64 runner without requiring a dedicated ARM runner.
+      # Native runner avoids relying on Docker's emulation support for the
+      # ARM64 container. The same runner label publishes the ARM64 Flatpak.
       image: altlinux.space/alt-hub/sisyphus/flatpak-builder@sha256:10d7f96f783a84cfbd89207d28a701de82fb7b893ab2bd586d406a6098890f04
-      options: --platform linux/arm64
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
