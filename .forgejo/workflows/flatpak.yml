@@ -37,23 +37,6 @@ jobs:
         # cannot spawn a build sandbox.
         run: dbus-uuidgen > /etc/machine-id
 
-      - name: Install OCI registry client
-        run: |
-          if command -v dnf >/dev/null; then
-            dnf install -y skopeo
-          elif command -v microdnf >/dev/null; then
-            microdnf install -y skopeo
-          elif command -v apk >/dev/null; then
-            apk add --no-cache skopeo
-          elif command -v apt-get >/dev/null; then
-            apt-get update
-            apt-get install -y skopeo
-          else
-            echo 'No supported package manager found to install skopeo' >&2
-            cat /etc/os-release >&2 || true
-            exit 1
-          fi
-
       - name: Install the Rust SDK extension
         # The image carries the GNOME runtime and SDK but not this. Its branch
         # is that of the freedesktop SDK the GNOME 50 SDK is built on, not 50 —
@@ -84,7 +67,7 @@ jobs:
             --repo-url="$repo_url" --gpg-keys="$public_key" \
             --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
             .flatpak-repo "$image" ru.toxblh.Matras stable
-          build-aux/publish-oci-flatpak.sh "$arch" "$image" stable oci-test
+          python3 build-aux/publish-oci-flatpak.py "$arch" "$image" stable oci-test
 
       - name: Publish bundle to Matras Packages
         env:
@@ -142,23 +125,6 @@ jobs:
         # cannot spawn a build sandbox.
         run: dbus-uuidgen > /etc/machine-id
 
-      - name: Install OCI registry client
-        run: |
-          if command -v dnf >/dev/null; then
-            dnf install -y skopeo
-          elif command -v microdnf >/dev/null; then
-            microdnf install -y skopeo
-          elif command -v apk >/dev/null; then
-            apk add --no-cache skopeo
-          elif command -v apt-get >/dev/null; then
-            apt-get update
-            apt-get install -y skopeo
-          else
-            echo 'No supported package manager found to install skopeo' >&2
-            cat /etc/os-release >&2 || true
-            exit 1
-          fi
-
       - name: Install the Rust SDK extension
         # The image carries the GNOME runtime and SDK but not this. Its branch
         # is that of the freedesktop SDK the GNOME 50 SDK is built on, not 50 —
@@ -189,7 +155,7 @@ jobs:
             --repo-url="$repo_url" --gpg-keys="$public_key" \
             --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
             .flatpak-repo "$image" ru.toxblh.Matras stable
-          build-aux/publish-oci-flatpak.sh "$arch" "$image" stable oci-test
+          python3 build-aux/publish-oci-flatpak.py "$arch" "$image" stable oci-test
 
       - name: Publish bundle to Matras Packages
         env:
