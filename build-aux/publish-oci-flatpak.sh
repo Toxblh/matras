@@ -19,10 +19,11 @@ server=${FORGEJO_SERVER_URL:-https://altlinux.space}
 registry=${server#https://}
 registry=${registry#http://}
 repository="${owner}/ru.toxblh.matras-${arch}-stable"
+flatpak_ref="app/ru.toxblh.Matras/${arch}/stable"
 
 for tag in "${tags[@]}"; do
   skopeo copy --retry-times 3 \
     --dest-creds "$owner:$PACKAGES_TOKEN" \
-    "oci-archive:$image" "docker://$registry/$repository:$tag"
+    "oci:$image:$flatpak_ref" "docker://$registry/$repository:$tag"
   echo "Published Flatpak OCI ${repository}:$tag"
 done
