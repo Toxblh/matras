@@ -21,7 +21,7 @@ use crate::state::SharedState;
 pub const GROUPING_WINDOW_MS: Millis = 5 * 60 * 1000;
 
 /// The largest pointer movement between press and release that still reads
-/// as a click rather than the start of a text selection.
+/// as a click rather than a drag.
 const CLICK_DRAG_THRESHOLD: f64 = 4.0;
 
 /// Upload ids are immutable; the global physical size limit is the normal
@@ -29,16 +29,15 @@ const CLICK_DRAG_THRESHOLD: f64 = 4.0;
 const FILE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
 
 /// Whether a press-then-release at these two points was a click (as opposed
-/// to a drag that grew a text selection). Pulled out of the gesture handlers
+/// to a drag). Pulled out of the gesture handlers
 /// below so it is the same test either way `released` fails to fire: on an
-/// ordinary release, and on the cancellation GTK sends instead when a
-/// selectable label's own gesture claims the sequence first.
+/// ordinary release.
 fn is_click(from: (f64, f64), to: (f64, f64)) -> bool {
     (from.0 - to.0).hypot(from.1 - to.1) < CLICK_DRAG_THRESHOLD
 }
 
-fn row_tap_opens_thread(is_android: bool) -> bool {
-    !is_android
+fn row_tap_opens_thread(_is_android: bool) -> bool {
+    true
 }
 
 fn message_text_is_selectable(is_android: bool) -> bool {
@@ -46,8 +45,35 @@ fn message_text_is_selectable(is_android: bool) -> bool {
 }
 
 #[cfg(test)]
+fn touch_actions_start_hidden(is_android: bool) -> bool {
+    is_android
+}
+
+fn reset_mobile_selection(label: &gtk::Label) {
+    if !cfg!(target_os = "android") {
+        return;
+    }
+    let clear_on_next_touch = gtk::GestureClick::new();
+    clear_on_next_touch.set_button(gtk::gdk::BUTTON_PRIMARY);
+    clear_on_next_touch.set_propagation_phase(gtk::PropagationPhase::Capture);
+    clear_on_next_touch.connect_pressed({
+        let label = label.clone();
+        move |gesture, _, _, _| {
+            if label.is_selectable() {
+                label.select_region(-1, -1);
+                label.set_selectable(false);
+            }
+            gesture.set_state(gtk::EventSequenceState::Denied);
+        }
+    });
+    label.add_controller(clear_on_next_touch);
+}
+
+#[cfg(test)]
 mod click_tests {
-    use super::{is_click, message_text_is_selectable, row_tap_opens_thread};
+    use super::{
+        is_click, message_text_is_selectable, row_tap_opens_thread, touch_actions_start_hidden,
+    };
 
     #[test]
     fn a_small_wobble_is_a_click_a_real_drag_is_not() {
@@ -58,10 +84,12 @@ mod click_tests {
 
     #[test]
     fn touch_clients_keep_row_swipes_for_the_scroller() {
-        assert!(!row_tap_opens_thread(true));
+        assert!(row_tap_opens_thread(true));
         assert!(row_tap_opens_thread(false));
         assert!(!message_text_is_selectable(true));
         assert!(message_text_is_selectable(false));
+        assert!(touch_actions_start_hidden(true));
+        assert!(!touch_actions_start_hidden(false));
     }
 }
 
@@ -391,25 +419,20 @@ pub fn build(
         footer.append(&open);
         body.append(&footer);
     }
-    // On desktop a row click is convenient and GTK's pointer arbitration is
-    // predictable. On Android, a row-wide tap competes with native touch
-    // scrolling and selectable labels; use explicit thread buttons there so
-    // every vertical swipe remains owned by GtkScrolledWindow.
+    // A short tap opens the thread. Text stays non-selectable on touch until
+    // a long press so GtkScrolledWindow can claim vertical drags first.
     if row_tap_opens_thread(cfg!(target_os = "android")) {
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_PRIMARY);
-        // Bubble phase would never see the click at all on a message whose
-        // text is selectable: whichever gesture claims a sequence first wins
-        // it — denying every other gesture in the same widget tree, ancestors
-        // included — and the label's own selection gesture, living on a
-        // descendant, would get there first. Capture runs top-down, so this
-        // one sees press and release ahead of that.
-        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        click.set_propagation_phase(if cfg!(target_os = "android") {
+            gtk::PropagationPhase::Bubble
+        } else {
+            gtk::PropagationPhase::Capture
+        });
 
         let press_at: Rc<Cell<(f64, f64)>> = Rc::new(Cell::new((0.0, 0.0)));
         // Set on a press that landed on the attached image (or its button's
-        // own padding), so `released` and `cancel` below both know to leave
-        // it to the image's own click instead of opening the thread.
+        // own padding), so `released` knows to leave it to the image click.
         let over_image: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         click.connect_pressed({
             let press_at = press_at.clone();
@@ -419,11 +442,7 @@ pub fn build(
                 let on_image = attachment_image_at(gesture, x, y);
                 over_image.set(on_image);
                 if on_image {
-                    // Give up the sequence here, in Capture, before Bubble
-                    // reaches the image's own button — whichever gesture
-                    // claims a sequence first wins it for the whole tree
-                    // (see the comment on `connect_cancel` below), and this
-                    // one runs first only because Capture always does.
+                    // Leave attached images to their own click handler.
                     gesture.set_state(gtk::EventSequenceState::Denied);
                 }
             }
@@ -448,32 +467,6 @@ pub fn build(
             }
         });
 
-        // A drag long enough to start a text selection makes GTK cancel this
-        // gesture in favour of the label's, so `released` above never fires —
-        // even for a click that only *looked* like it might become a drag (a
-        // stray pixel of jitter is enough to trip that). The decision is
-        // repeated here from wherever the pointer was when the cancellation
-        // happened, which is what makes a plain click reliable rather than
-        // working only "most of the time".
-        //
-        // The same signal also fires for the self-denial above (an image
-        // click looks, at this point, exactly like a cancelled one), which is
-        // why it is guarded the same way.
-        click.connect_cancel({
-            let actions = actions.clone();
-            let root = post.thread_root().to_string();
-            let allow_thread = options.show_thread_footer;
-            move |gesture, sequence| {
-                if over_image.get() || !allow_thread {
-                    return;
-                }
-                if let Some(released_at) = gesture.point(sequence) {
-                    if is_click(press_at.get(), released_at) {
-                        (actions.open_thread)(root.clone());
-                    }
-                }
-            }
-        });
         row.add_controller(click);
     }
 
@@ -484,17 +477,43 @@ pub fn build(
         row.add_css_class("message-pending");
     }
 
-    let action_bar = hover_actions(
-        post,
-        actions,
-        options.show_thread_footer && (!cfg!(target_os = "android") || post.reply_count == 0),
-        mine,
-        saved,
-    );
-    row.append(&body_with_hover_actions(
-        body.upcast_ref(),
-        action_bar.upcast_ref(),
-    ));
+    let action_bar = hover_actions(post, actions, options.show_thread_footer, mine, saved);
+    if cfg!(target_os = "android") {
+        let menu = gtk::Popover::builder()
+            .child(&action_bar)
+            .has_arrow(true)
+            .autohide(true)
+            .build();
+        menu.set_parent(&row);
+        let long_press = gtk::GestureLongPress::new();
+        long_press.set_propagation_phase(gtk::PropagationPhase::Bubble);
+        long_press.connect_pressed({
+            let row = row.clone();
+            let menu = menu.clone();
+            move |gesture, x, y| {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                select_text_at(row.upcast_ref(), x, y);
+                menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                    x.round() as i32,
+                    y.round() as i32,
+                    1,
+                    1,
+                )));
+                menu.popup();
+            }
+        });
+        long_press.connect_cancelled({
+            let menu = menu.clone();
+            move |_| menu.popdown()
+        });
+        row.add_controller(long_press);
+        row.append(&body);
+    } else {
+        row.append(&body_with_hover_actions(
+            body.upcast_ref(),
+            action_bar.upcast_ref(),
+        ));
+    }
 
     row.upcast()
 }
@@ -504,18 +523,6 @@ pub fn build(
 /// to every row's minimum width, preventing the conversation from fitting a
 /// PinePhone-sized window.
 fn body_with_hover_actions(body: &gtk::Widget, actions: &gtk::Widget) -> gtk::Widget {
-    if cfg!(target_os = "android") {
-        let content = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(4)
-            .build();
-        actions.set_halign(gtk::Align::Start);
-        actions.set_valign(gtk::Align::Center);
-        content.append(body);
-        content.append(actions);
-        return content.upcast();
-    }
-
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(body));
     actions.set_halign(gtk::Align::End);
@@ -523,6 +530,24 @@ fn body_with_hover_actions(body: &gtk::Widget, actions: &gtk::Widget) -> gtk::Wi
     overlay.add_overlay(actions);
     overlay.set_measure_overlay(actions, hover_actions_affect_minimum_width());
     overlay.upcast()
+}
+
+fn select_text_at(row: &gtk::Widget, x: f64, y: f64) {
+    let Some(mut widget) = row.pick(x, y, gtk::PickFlags::DEFAULT) else {
+        return;
+    };
+    loop {
+        if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
+            label.set_selectable(true);
+            label.select_region(0, -1);
+            return;
+        }
+        if widget == *row {
+            break;
+        }
+        let Some(parent) = widget.parent() else { break };
+        widget = parent;
+    }
 }
 
 fn hover_actions_affect_minimum_width() -> bool {
@@ -613,6 +638,7 @@ fn attachment_card(
             .selectable(message_text_is_selectable(cfg!(target_os = "android")))
             .can_focus(false)
             .build();
+        reset_mobile_selection(&label);
         for class in classes {
             label.add_css_class(class);
         }
@@ -1006,6 +1032,7 @@ fn attachment(
         .hexpand(true)
         .ellipsize(gtk::pango::EllipsizeMode::Middle)
         .build();
+    reset_mobile_selection(&label);
 
     let save = gtk::Button::builder()
         .icon_name("document-save-symbolic")
@@ -1143,6 +1170,7 @@ fn render_block(
         // focus, so the first message would come up highlighted.
         .can_focus(false)
         .build();
+    reset_mobile_selection(&label);
 
     match block {
         crate::markdown::Block::Text(markup) => {
@@ -1469,7 +1497,7 @@ fn hover_actions(
         .build();
     bar.add_css_class("message-actions");
     if cfg!(target_os = "android") {
-        bar.add_css_class("message-actions-touch");
+        bar.add_css_class("message-actions-context");
     }
 
     let react = gtk::MenuButton::builder()

@@ -352,9 +352,8 @@ link:visited {
   opacity: 1;
 }
 
-/* There is no hover state on Android touch screens. Keep the action buttons
-   visible below each message so reply/copy do not depend on tapping the row. */
-.message-actions-touch {
+/* Android puts these controls in a long-press popover. */
+.message-actions.message-actions-context {
   opacity: 1;
 }
 

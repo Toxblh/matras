@@ -38,6 +38,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.1.2" date="2026-09-25">
+      <description>
+        <p>Android messages scroll on drag, open threads on tap and expose text selection and actions on long press.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-09-25">
       <description>
         <p>Android message swipes scroll the conversation; reply actions open threads.</p>
