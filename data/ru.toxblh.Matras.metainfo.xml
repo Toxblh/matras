@@ -38,6 +38,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.1.1" date="2026-09-25">
+      <description>
+        <p>Android message swipes scroll the conversation; reply actions open threads.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-09-03"/>
   </releases>
   <requires>

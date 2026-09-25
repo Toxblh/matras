@@ -41,9 +41,13 @@ fn row_tap_opens_thread(is_android: bool) -> bool {
     !is_android
 }
 
+fn message_text_is_selectable(is_android: bool) -> bool {
+    !is_android
+}
+
 #[cfg(test)]
 mod click_tests {
-    use super::{is_click, row_tap_opens_thread};
+    use super::{is_click, message_text_is_selectable, row_tap_opens_thread};
 
     #[test]
     fn a_small_wobble_is_a_click_a_real_drag_is_not() {
@@ -56,6 +60,8 @@ mod click_tests {
     fn touch_clients_keep_row_swipes_for_the_scroller() {
         assert!(!row_tap_opens_thread(true));
         assert!(row_tap_opens_thread(false));
+        assert!(!message_text_is_selectable(true));
+        assert!(message_text_is_selectable(false));
     }
 }
 
@@ -609,7 +615,7 @@ fn attachment_card(
             .label(text)
             .xalign(0.0)
             .wrap(true)
-            .selectable(true)
+            .selectable(message_text_is_selectable(cfg!(target_os = "android")))
             .can_focus(false)
             .build();
         for class in classes {
@@ -1137,7 +1143,7 @@ fn render_block(
         .xalign(0.0)
         .wrap(true)
         .wrap_mode(gtk::pango::WrapMode::WordChar)
-        .selectable(true)
+        .selectable(message_text_is_selectable(cfg!(target_os = "android")))
         // Selectable labels select all their text when they take keyboard
         // focus, so the first message would come up highlighted.
         .can_focus(false)
