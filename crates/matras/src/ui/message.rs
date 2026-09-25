@@ -49,26 +49,6 @@ fn touch_actions_start_hidden(is_android: bool) -> bool {
     is_android
 }
 
-fn reset_mobile_selection(label: &gtk::Label) {
-    if !cfg!(target_os = "android") {
-        return;
-    }
-    let clear_on_next_touch = gtk::GestureClick::new();
-    clear_on_next_touch.set_button(gtk::gdk::BUTTON_PRIMARY);
-    clear_on_next_touch.set_propagation_phase(gtk::PropagationPhase::Capture);
-    clear_on_next_touch.connect_pressed({
-        let label = label.clone();
-        move |gesture, _, _, _| {
-            if label.is_selectable() {
-                label.select_region(-1, -1);
-                label.set_selectable(false);
-            }
-            gesture.set_state(gtk::EventSequenceState::Denied);
-        }
-    });
-    label.add_controller(clear_on_next_touch);
-}
-
 #[cfg(test)]
 mod click_tests {
     use super::{
@@ -441,7 +421,11 @@ pub fn build(
     if row_tap_opens_thread(cfg!(target_os = "android")) {
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_PRIMARY);
-        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        click.set_propagation_phase(if cfg!(target_os = "android") {
+            gtk::PropagationPhase::Bubble
+        } else {
+            gtk::PropagationPhase::Capture
+        });
 
         let press_at: Rc<Cell<(f64, f64)>> = Rc::new(Cell::new((0.0, 0.0)));
         // Buttons (profile, permalink, attachment, thread footer) own their
@@ -482,6 +466,26 @@ pub fn build(
                 (actions.open_thread)(root.clone());
             }
         });
+
+        if !cfg!(target_os = "android") {
+            click.connect_cancel({
+                let actions = actions.clone();
+                let root = post.thread_root().to_string();
+                let allow_thread = options.show_thread_footer;
+                let press_at = press_at.clone();
+                let over_button = over_button.clone();
+                move |gesture, sequence| {
+                    if over_button.get() || !allow_thread {
+                        return;
+                    }
+                    if let Some(released_at) = gesture.point(sequence) {
+                        if is_click(press_at.get(), released_at) {
+                            (actions.open_thread)(root.clone());
+                        }
+                    }
+                }
+            });
+        }
 
         row.add_controller(click);
     }
@@ -556,6 +560,22 @@ fn select_text_at(row: &gtk::Widget, x: f64, y: f64) {
         if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
             label.set_selectable(true);
             label.select_region(0, -1);
+            let reset = gtk::EventControllerLegacy::new();
+            reset.set_propagation_phase(gtk::PropagationPhase::Capture);
+            reset.connect_event({
+                let label = label.clone();
+                move |_, event| {
+                    if matches!(
+                        event.event_type(),
+                        gtk::gdk::EventType::TouchBegin | gtk::gdk::EventType::ButtonPress
+                    ) {
+                        label.select_region(-1, -1);
+                        label.set_selectable(false);
+                    }
+                    gtk::glib::Propagation::Proceed
+                }
+            });
+            label.add_controller(reset);
             return;
         }
         if widget == *row {
@@ -654,7 +674,6 @@ fn attachment_card(
             .selectable(message_text_is_selectable(cfg!(target_os = "android")))
             .can_focus(false)
             .build();
-        reset_mobile_selection(&label);
         for class in classes {
             label.add_css_class(class);
         }
@@ -1048,7 +1067,6 @@ fn attachment(
         .hexpand(true)
         .ellipsize(gtk::pango::EllipsizeMode::Middle)
         .build();
-    reset_mobile_selection(&label);
 
     let save = gtk::Button::builder()
         .icon_name("document-save-symbolic")
@@ -1186,7 +1204,6 @@ fn render_block(
         // focus, so the first message would come up highlighted.
         .can_focus(false)
         .build();
-    reset_mobile_selection(&label);
 
     match block {
         crate::markdown::Block::Text(markup) => {
