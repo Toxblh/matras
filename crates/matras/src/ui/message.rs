@@ -37,15 +37,25 @@ fn is_click(from: (f64, f64), to: (f64, f64)) -> bool {
     (from.0 - to.0).hypot(from.1 - to.1) < CLICK_DRAG_THRESHOLD
 }
 
+fn row_tap_opens_thread(is_android: bool) -> bool {
+    !is_android
+}
+
 #[cfg(test)]
 mod click_tests {
-    use super::is_click;
+    use super::{is_click, row_tap_opens_thread};
 
     #[test]
     fn a_small_wobble_is_a_click_a_real_drag_is_not() {
         assert!(is_click((10.0, 10.0), (10.0, 10.0)));
         assert!(is_click((10.0, 10.0), (12.0, 11.0)));
         assert!(!is_click((10.0, 10.0), (30.0, 10.0)));
+    }
+
+    #[test]
+    fn touch_clients_keep_row_swipes_for_the_scroller() {
+        assert!(!row_tap_opens_thread(true));
+        assert!(row_tap_opens_thread(false));
     }
 }
 
@@ -375,16 +385,34 @@ pub fn build(
         footer.append(&open);
         body.append(&footer);
     }
-    // A message with no replies gets no footer: starting a thread is the reply
-    // button in the hover bar, and a permanent "Reply" under every message is
-    // just noise.
+    // Touch devices need an explicit reply target: tapping anywhere on a
+    // selectable message row competes with GtkScrolledWindow's native swipe.
+    let touch_reply = cfg!(target_os = "android") && options.show_thread_footer;
+    if touch_reply && post.reply_count == 0 {
+        let reply = gtk::Button::builder()
+            .label("Reply in thread")
+            .halign(gtk::Align::Start)
+            .build();
+        reply.add_css_class("flat");
+        reply.add_css_class("thread-link");
+        reply.connect_clicked({
+            let actions = actions.clone();
+            let root = post.thread_root().to_string();
+            move |_| (actions.open_thread)(root.clone())
+        });
+        let footer = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .halign(gtk::Align::Start)
+            .build();
+        footer.append(&reply);
+        body.append(&footer);
+    }
 
-    // Clicking the message opens its thread — the whole row, not just the
-    // reply count, which is what every other client does and what people try
-    // first. A secondary click is left alone so the context menu still works,
-    // and text selection is unaffected because the decision is made from how
-    // far the pointer moved, not by asking the label afterwards.
-    {
+    // On desktop a row click is convenient and GTK's pointer arbitration is
+    // predictable. On Android, a row-wide tap competes with native touch
+    // scrolling and selectable labels; use explicit thread buttons there so
+    // every vertical swipe remains owned by GtkScrolledWindow.
+    if row_tap_opens_thread(cfg!(target_os = "android")) {
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_PRIMARY);
         // Bubble phase would never see the click at all on a message whose
