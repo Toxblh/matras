@@ -391,29 +391,6 @@ pub fn build(
         footer.append(&open);
         body.append(&footer);
     }
-    // Touch devices need an explicit reply target: tapping anywhere on a
-    // selectable message row competes with GtkScrolledWindow's native swipe.
-    let touch_reply = cfg!(target_os = "android") && options.show_thread_footer;
-    if touch_reply && post.reply_count == 0 {
-        let reply = gtk::Button::builder()
-            .label("Reply in thread")
-            .halign(gtk::Align::Start)
-            .build();
-        reply.add_css_class("flat");
-        reply.add_css_class("thread-link");
-        reply.connect_clicked({
-            let actions = actions.clone();
-            let root = post.thread_root().to_string();
-            move |_| (actions.open_thread)(root.clone())
-        });
-        let footer = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .halign(gtk::Align::Start)
-            .build();
-        footer.append(&reply);
-        body.append(&footer);
-    }
-
     // On desktop a row click is convenient and GTK's pointer arbitration is
     // predictable. On Android, a row-wide tap competes with native touch
     // scrolling and selectable labels; use explicit thread buttons there so
@@ -507,7 +484,13 @@ pub fn build(
         row.add_css_class("message-pending");
     }
 
-    let action_bar = hover_actions(post, actions, options.show_thread_footer, mine, saved);
+    let action_bar = hover_actions(
+        post,
+        actions,
+        options.show_thread_footer && (!cfg!(target_os = "android") || post.reply_count == 0),
+        mine,
+        saved,
+    );
     row.append(&body_with_hover_actions(
         body.upcast_ref(),
         action_bar.upcast_ref(),
@@ -520,14 +503,26 @@ pub fn build(
 /// trailing column. Otherwise their hidden buttons still add roughly 140 px
 /// to every row's minimum width, preventing the conversation from fitting a
 /// PinePhone-sized window.
-fn body_with_hover_actions(body: &gtk::Widget, actions: &gtk::Widget) -> gtk::Overlay {
+fn body_with_hover_actions(body: &gtk::Widget, actions: &gtk::Widget) -> gtk::Widget {
+    if cfg!(target_os = "android") {
+        let content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(4)
+            .build();
+        actions.set_halign(gtk::Align::Start);
+        actions.set_valign(gtk::Align::Center);
+        content.append(body);
+        content.append(actions);
+        return content.upcast();
+    }
+
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(body));
     actions.set_halign(gtk::Align::End);
     actions.set_valign(gtk::Align::Start);
     overlay.add_overlay(actions);
     overlay.set_measure_overlay(actions, hover_actions_affect_minimum_width());
-    overlay
+    overlay.upcast()
 }
 
 fn hover_actions_affect_minimum_width() -> bool {
@@ -1473,6 +1468,9 @@ fn hover_actions(
         .valign(gtk::Align::Start)
         .build();
     bar.add_css_class("message-actions");
+    if cfg!(target_os = "android") {
+        bar.add_css_class("message-actions-touch");
+    }
 
     let react = gtk::MenuButton::builder()
         .icon_name("face-smile-symbolic")
