@@ -113,6 +113,23 @@ fn attachment_image_at(gesture: &gtk::GestureClick, x: f64, y: f64) -> bool {
     false
 }
 
+fn message_button_at(gesture: &gtk::GestureClick, x: f64, y: f64) -> bool {
+    let Some(row) = gesture.widget() else {
+        return false;
+    };
+    let mut widget = row.pick(x, y, gtk::PickFlags::DEFAULT);
+    while let Some(current) = widget {
+        if current.is::<gtk::Button>() {
+            return true;
+        }
+        if current == row {
+            break;
+        }
+        widget = current.parent();
+    }
+    false
+}
+
 /// What a message row can ask the application to do.
 #[derive(Clone)]
 pub struct MessageActions {
@@ -424,25 +441,25 @@ pub fn build(
     if row_tap_opens_thread(cfg!(target_os = "android")) {
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_PRIMARY);
-        click.set_propagation_phase(if cfg!(target_os = "android") {
-            gtk::PropagationPhase::Bubble
-        } else {
-            gtk::PropagationPhase::Capture
-        });
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
 
         let press_at: Rc<Cell<(f64, f64)>> = Rc::new(Cell::new((0.0, 0.0)));
-        // Set on a press that landed on the attached image (or its button's
-        // own padding), so `released` knows to leave it to the image click.
-        let over_image: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        // Buttons (profile, permalink, attachment, thread footer) own their
+        // click. Message text itself remains available to the row tap.
+        let over_button: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         click.connect_pressed({
             let press_at = press_at.clone();
-            let over_image = over_image.clone();
+            let over_button = over_button.clone();
             move |gesture, _, x, y| {
                 press_at.set((x, y));
-                let on_image = attachment_image_at(gesture, x, y);
-                over_image.set(on_image);
-                if on_image {
-                    // Leave attached images to their own click handler.
+                let on_button = if cfg!(target_os = "android") {
+                    message_button_at(gesture, x, y)
+                } else {
+                    attachment_image_at(gesture, x, y)
+                };
+                over_button.set(on_button);
+                if on_button {
+                    // Leave child buttons to their own click handlers.
                     gesture.set_state(gtk::EventSequenceState::Denied);
                 }
             }
@@ -453,10 +470,9 @@ pub fn build(
             let root = post.thread_root().to_string();
             let allow_thread = options.show_thread_footer;
             let press_at = press_at.clone();
-            let over_image = over_image.clone();
+            let over_button = over_button.clone();
             move |_, presses, x, y| {
-                // A double click is somebody selecting a word.
-                if over_image.get()
+                if over_button.get()
                     || presses > 1
                     || !allow_thread
                     || !is_click(press_at.get(), (x, y))
