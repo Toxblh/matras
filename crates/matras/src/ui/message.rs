@@ -505,14 +505,25 @@ pub fn build(
             .autohide(true)
             .build();
         menu.set_parent(&row);
+        let selected_label = Rc::new(std::cell::RefCell::new(None::<gtk::Label>));
+        menu.connect_closed({
+            let selected_label = selected_label.clone();
+            move |_| {
+                if let Some(label) = selected_label.borrow_mut().take() {
+                    label.select_region(-1, -1);
+                    label.set_selectable(false);
+                }
+            }
+        });
         let long_press = gtk::GestureLongPress::new();
         long_press.set_propagation_phase(gtk::PropagationPhase::Bubble);
         long_press.connect_pressed({
             let row = row.clone();
             let menu = menu.clone();
+            let selected_label = selected_label.clone();
             move |gesture, x, y| {
                 gesture.set_state(gtk::EventSequenceState::Claimed);
-                select_text_at(row.upcast_ref(), x, y);
+                selected_label.replace(select_text_at(row.upcast_ref(), x, y));
                 menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
                     x.round() as i32,
                     y.round() as i32,
@@ -552,31 +563,15 @@ fn body_with_hover_actions(body: &gtk::Widget, actions: &gtk::Widget) -> gtk::Wi
     overlay.upcast()
 }
 
-fn select_text_at(row: &gtk::Widget, x: f64, y: f64) {
+fn select_text_at(row: &gtk::Widget, x: f64, y: f64) -> Option<gtk::Label> {
     let Some(mut widget) = row.pick(x, y, gtk::PickFlags::DEFAULT) else {
-        return;
+        return None;
     };
     loop {
         if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
             label.set_selectable(true);
             label.select_region(0, -1);
-            let reset = gtk::EventControllerLegacy::new();
-            reset.set_propagation_phase(gtk::PropagationPhase::Capture);
-            reset.connect_event({
-                let label = label.clone();
-                move |_, event| {
-                    if matches!(
-                        event.event_type(),
-                        gtk::gdk::EventType::TouchBegin | gtk::gdk::EventType::ButtonPress
-                    ) {
-                        label.select_region(-1, -1);
-                        label.set_selectable(false);
-                    }
-                    gtk::glib::Propagation::Proceed
-                }
-            });
-            label.add_controller(reset);
-            return;
+            return Some(label);
         }
         if widget == *row {
             break;
@@ -584,6 +579,7 @@ fn select_text_at(row: &gtk::Widget, x: f64, y: f64) {
         let Some(parent) = widget.parent() else { break };
         widget = parent;
     }
+    None
 }
 
 fn hover_actions_affect_minimum_width() -> bool {
