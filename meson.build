@@ -1,5 +1,5 @@
 project('ru.toxblh.Matras', 'c',
-  version: '0.1.0',
+  version: '1.0.1',
   meson_version: '>= 1.8.0',
 )
 

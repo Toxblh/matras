@@ -1,5 +1,5 @@
 Name: matras
-Version: 0.1.0
+Version: 1.0.1
 Release: alt1
 Summary: Native Mattermost client for GNOME
 License: GPL-3.0-only
@@ -51,5 +51,8 @@ install -Dpm644 data/icons/hicolor/scalable/apps/ru.toxblh.Matras.svg \
 %doc README.md LICENSE
 
 %changelog
+* Fri Oct 23 2026 Builder <hasherc-ci@altlinux.org> 1.0.1-alt1
+- 1.0.1: GNOME HIG pass, presence polling, adaptive dialogs.
+
 * Wed Sep 23 2026 Builder <hasherc-ci@altlinux.org> 0.1.0-alt1
 - Initial ALT package.

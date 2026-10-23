@@ -30,7 +30,8 @@ jobs:
           git add -f .cargo/config.toml vendor/
           release="alt1.sisyphus.aarch64.g${GITHUB_SHA:0:12}.r${GITHUB_RUN_ID}"
           sed -i "s/^Release: alt1$/Release: $release/" matras.spec
-          sed -i "s/ 0.1.0-alt1$/ 0.1.0-$release/" matras.spec
+          # Only the newest changelog entry carries this build's release.
+          sed -i -E "0,/^(\* .* [0-9.]+)-alt1$/s//\1-$release/" matras.spec
 
       - name: Build aarch64 RPM
         run: |
