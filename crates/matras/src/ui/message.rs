@@ -74,25 +74,8 @@ mod click_tests {
 }
 
 /// Whether a point — in the coordinates of the row a click gesture is
-/// attached to — lands on an attached image's button, the one place in a
-/// message a click has to open the lightbox instead of the thread.
-fn attachment_image_at(gesture: &gtk::GestureClick, x: f64, y: f64) -> bool {
-    let Some(row) = gesture.widget() else {
-        return false;
-    };
-    let mut widget = row.pick(x, y, gtk::PickFlags::DEFAULT);
-    while let Some(current) = widget {
-        if current.has_css_class("attachment-button") {
-            return true;
-        }
-        if current == row {
-            break;
-        }
-        widget = current.parent();
-    }
-    false
-}
-
+/// attached to — lands on a button (an attached image, a profile, the hover
+/// bar), which owns its click instead of the row opening the thread.
 fn message_button_at(gesture: &gtk::GestureClick, x: f64, y: f64) -> bool {
     let Some(row) = gesture.widget() else {
         return false;
@@ -444,11 +427,10 @@ pub fn build(
             move |gesture, _, x, y| {
                 press_at.set((x, y));
                 menu_opened.set(false);
-                let on_button = if cfg!(target_os = "android") {
-                    message_button_at(gesture, x, y)
-                } else {
-                    attachment_image_at(gesture, x, y)
-                };
+                // Any button: on the desktop the hover bar's buttons claim
+                // the press, and the cancel handler below would otherwise
+                // take that for a click on the text and open the thread.
+                let on_button = message_button_at(gesture, x, y);
                 over_button.set(on_button);
                 if on_button {
                     // Leave child buttons to their own click handlers.
@@ -618,13 +600,24 @@ fn attach_post_context_menu(
     // a controller that holds the controller's own widget is a cycle.
     let right_click = gtk::GestureClick::new();
     right_click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    // Capture, ahead of the selectable labels' own Cut/Copy/Paste menu —
+    // except over a label with text selected, where copying the selection is
+    // what the right click is for.
+    right_click.set_propagation_phase(gtk::PropagationPhase::Capture);
     right_click.connect_pressed({
         let open = open.clone();
         move |gesture, _, x, y| {
-            if let Some(row) = gesture.widget() {
-                gesture.set_state(gtk::EventSequenceState::Claimed);
-                open(&row, x, y);
+            let Some(row) = gesture.widget() else { return };
+            let selection = row
+                .pick(x, y, gtk::PickFlags::DEFAULT)
+                .and_then(|w| w.ancestor(gtk::Label::static_type()).or(Some(w)))
+                .and_downcast::<gtk::Label>()
+                .is_some_and(|label| label.selection_bounds().is_some());
+            if selection {
+                return;
             }
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            open(&row, x, y);
         }
     });
     row.add_controller(right_click);
