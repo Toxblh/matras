@@ -583,13 +583,65 @@ fn attach_category_menu(
     });
     row.insert_action_group("category", Some(&group));
 
+    attach_context_triggers(
+        row,
+        Rc::new(move |_: &gtk::ListBoxRow, x: f64, y: f64| {
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.popup();
+        }),
+    );
+}
+
+/// Opens a row's context menu at a point in the row.
+type OpenMenu = Rc<dyn Fn(&gtk::ListBoxRow, f64, f64)>;
+
+/// The ways to ask for a row's menu: right click, a long press on a
+/// touchscreen, and Shift+F10 or the Menu key while the row has focus.
+fn attach_context_triggers(row: &gtk::ListBoxRow, open: OpenMenu) {
+    // The row comes from the controller rather than being captured: a
+    // controller belongs to its widget, so a closure holding that widget is
+    // a cycle and the row would never be freed.
     let click = gtk::GestureClick::new();
     click.set_button(gtk::gdk::BUTTON_SECONDARY);
-    click.connect_pressed(move |_, _, x, y| {
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        popover.popup();
+    click.connect_pressed({
+        let open = open.clone();
+        move |gesture, _, x, y| {
+            if let Some(row) = gesture.widget().and_downcast::<gtk::ListBoxRow>() {
+                open(&row, x, y);
+            }
+        }
     });
     row.add_controller(click);
+
+    // A press that turns into the menu must not also select the channel, so
+    // the gesture claims the sequence and the list's own click is cancelled.
+    let long_press = gtk::GestureLongPress::new();
+    long_press.set_touch_only(true);
+    long_press.connect_pressed({
+        let open = open.clone();
+        move |gesture, x, y| {
+            if let Some(row) = gesture.widget().and_downcast::<gtk::ListBoxRow>() {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                open(&row, x, y);
+            }
+        }
+    });
+    row.add_controller(long_press);
+
+    let keys = gtk::EventControllerKey::new();
+    keys.connect_key_pressed(move |controller, key, _, modifier| {
+        let shift_f10 =
+            key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+        if !(shift_f10 || key == gtk::gdk::Key::Menu) {
+            return gtk::glib::Propagation::Proceed;
+        }
+        let Some(row) = controller.widget().and_downcast::<gtk::ListBoxRow>() else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        open(&row, 24.0, f64::from(row.height()) / 2.0);
+        gtk::glib::Propagation::Stop
+    });
+    row.add_controller(keys);
 }
 
 /// The right-click menu on a channel: mute it, favourite it, or file it under
@@ -650,18 +702,10 @@ fn attach_row_menu(
     // for every channel in the sidebar, rebuilt on every sidebar refresh, was
     // twenty thousand allocations for menus that are almost never opened.
     let built: Rc<RefCell<Option<gtk::PopoverMenu>>> = Rc::new(RefCell::new(None));
-    let click = gtk::GestureClick::new();
-    click.set_button(gtk::gdk::BUTTON_SECONDARY);
-    click.connect_pressed({
+    let open: OpenMenu = Rc::new({
         let categories = categories.clone();
         let channel_id = channel_id.to_string();
-        // The row comes from the gesture rather than being captured: a
-        // controller belongs to its widget, so a closure holding that widget
-        // is a cycle and the row would never be freed.
-        move |gesture, _, x, y| {
-            let Some(row) = gesture.widget().and_downcast::<gtk::ListBoxRow>() else {
-                return;
-            };
+        move |row, x, y| {
             let mut slot = built.borrow_mut();
             let popover = slot.get_or_insert_with(|| {
                 let menu = gtk::gio::Menu::new();
@@ -679,7 +723,7 @@ fn attach_row_menu(
                 }
 
                 let popover = gtk::PopoverMenu::from_model(Some(&menu));
-                popover.set_parent(&row);
+                popover.set_parent(row);
                 popover.set_has_arrow(false);
                 popover.set_halign(gtk::Align::Start);
                 // A parented popover is a child of the row, and the sidebar
@@ -697,7 +741,7 @@ fn attach_row_menu(
             popover.popup();
         }
     });
-    row.add_controller(click);
+    attach_context_triggers(row, open);
 }
 
 fn category_header(name: &str) -> gtk::ListBoxRow {
