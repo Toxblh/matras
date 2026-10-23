@@ -419,6 +419,9 @@ pub fn build(
         footer.append(&open);
         body.append(&footer);
     }
+    // Set when a press turned into the context menu, so its release does not
+    // also open the thread.
+    let menu_opened: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     // A short tap opens the thread. Text stays non-selectable on touch until
     // a long press so GtkScrolledWindow can claim vertical drags first.
     if row_tap_opens_thread(cfg!(target_os = "android")) {
@@ -437,8 +440,10 @@ pub fn build(
         click.connect_pressed({
             let press_at = press_at.clone();
             let over_button = over_button.clone();
+            let menu_opened = menu_opened.clone();
             move |gesture, _, x, y| {
                 press_at.set((x, y));
+                menu_opened.set(false);
                 let on_button = if cfg!(target_os = "android") {
                     message_button_at(gesture, x, y)
                 } else {
@@ -458,8 +463,10 @@ pub fn build(
             let allow_thread = options.show_thread_footer;
             let press_at = press_at.clone();
             let over_button = over_button.clone();
+            let menu_opened = menu_opened.clone();
             move |_, presses, x, y| {
                 if over_button.get()
+                    || menu_opened.get()
                     || presses > 1
                     || !allow_thread
                     || !is_click(press_at.get(), (x, y))
@@ -477,8 +484,9 @@ pub fn build(
                 let allow_thread = options.show_thread_footer;
                 let press_at = press_at.clone();
                 let over_button = over_button.clone();
+                let menu_opened = menu_opened.clone();
                 move |gesture, sequence| {
-                    if over_button.get() || !allow_thread {
+                    if over_button.get() || menu_opened.get() || !allow_thread {
                         return;
                     }
                     if let Some(released_at) = gesture.point(sequence) {
@@ -543,6 +551,26 @@ pub fn build(
         row.add_controller(long_press);
         row.append(&body);
     } else {
+        // The hover bar is invisible until the row is pointed at, and an
+        // invisible button must not take clicks: it only accepts the pointer
+        // while the pointer is over the row. Keyboard focus reveals it through
+        // `:focus-within` in the stylesheet.
+        action_bar.set_can_target(false);
+        let motion = gtk::EventControllerMotion::new();
+        let bar = action_bar.downgrade();
+        motion.connect_enter(move |_, _, _| {
+            if let Some(bar) = bar.upgrade() {
+                bar.set_can_target(true);
+            }
+        });
+        let bar = action_bar.downgrade();
+        motion.connect_leave(move |_| {
+            if let Some(bar) = bar.upgrade() {
+                bar.set_can_target(false);
+            }
+        });
+        row.add_controller(motion);
+        attach_post_context_menu(&row, post, actions, mine, &menu_opened);
         row.append(&body_with_hover_actions(
             body.upcast_ref(),
             action_bar.upcast_ref(),
@@ -550,6 +578,70 @@ pub fn build(
     }
 
     row.upcast()
+}
+
+/// The post menu on a right click, or a long press on a touchscreen — the
+/// hover bar never shows without a pointer. Built on first use, like the
+/// "…" button's.
+fn attach_post_context_menu(
+    row: &gtk::Box,
+    post: &Post,
+    actions: &MessageActions,
+    mine: bool,
+    menu_opened: &Rc<Cell<bool>>,
+) {
+    let built: Rc<std::cell::RefCell<Option<gtk::PopoverMenu>>> = Rc::default();
+    let open: Rc<dyn Fn(&gtk::Widget, f64, f64)> = Rc::new({
+        let post = post.clone();
+        let actions = actions.clone();
+        move |row, x, y| {
+            let mut slot = built.borrow_mut();
+            let popover = slot.get_or_insert_with(|| {
+                let (menu, group) = post_menu(&post, &actions, mine);
+                row.insert_action_group("post", Some(&group));
+                let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                popover.set_parent(row);
+                popover.set_has_arrow(false);
+                popover.set_halign(gtk::Align::Start);
+                row.connect_destroy({
+                    let popover = popover.clone();
+                    move |_| popover.unparent()
+                });
+                popover
+            });
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.popup();
+        }
+    });
+
+    // The row comes from the gesture rather than being captured: a closure on
+    // a controller that holds the controller's own widget is a cycle.
+    let right_click = gtk::GestureClick::new();
+    right_click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    right_click.connect_pressed({
+        let open = open.clone();
+        move |gesture, _, x, y| {
+            if let Some(row) = gesture.widget() {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                open(&row, x, y);
+            }
+        }
+    });
+    row.add_controller(right_click);
+
+    let long_press = gtk::GestureLongPress::new();
+    long_press.set_touch_only(true);
+    long_press.connect_pressed({
+        let menu_opened = menu_opened.clone();
+        move |gesture, x, y| {
+            if let Some(row) = gesture.widget() {
+                menu_opened.set(true);
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                open(&row, x, y);
+            }
+        }
+    });
+    row.add_controller(long_press);
 }
 
 /// Hover controls float over the message instead of taking a permanent
