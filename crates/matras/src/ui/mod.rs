@@ -2256,23 +2256,9 @@ impl Ui {
             list.append(&entry);
         }
 
-        let window = adw::Window::builder()
-            .title("Edit history")
-            .transient_for(&self.window)
-            .modal(true)
-            .default_width(520)
-            .default_height(420)
-            .build();
-        let view = adw::ToolbarView::new();
-        view.add_top_bar(&adw::HeaderBar::new());
-        view.set_content(Some(
-            &gtk::ScrolledWindow::builder()
-                .hscrollbar_policy(gtk::PolicyType::Never)
-                .child(&list)
-                .build(),
-        ));
-        window.set_content(Some(&view));
-        window.present();
+        let dialog = dialogs::list_dialog("Edit History", None, &list);
+        dialog.set_content_width(520);
+        dialog.present(Some(&self.window));
     }
 
     /// Sends what is in the composer at a chosen time.
@@ -2913,12 +2899,18 @@ impl Ui {
             list.append(
                 &adw::StatusPage::builder()
                     .icon_name("alarm-symbolic")
-                    .title("Nothing scheduled")
-                    .description("Messages you send later wait here.")
+                    .title("No Scheduled Messages")
+                    .description("Messages you send later wait here")
                     .css_classes(["compact"])
                     .build(),
             );
         }
+
+        // Deleting is undone from a toast, so the toasts live in the dialog
+        // where they can be seen, and the delete itself waits for the toast
+        // to go away.
+        let toasts = adw::ToastOverlay::new();
+        let pending: Rc<RefCell<Vec<adw::Toast>>> = Rc::default();
 
         for scheduled in posts {
             let when = gtk::Label::builder()
@@ -2943,7 +2935,7 @@ impl Ui {
             // that the time was wrong.
             let reschedule = gtk::Button::builder()
                 .icon_name("alarm-symbolic")
-                .tooltip_text("Change the time")
+                .tooltip_text("Reschedule")
                 .valign(gtk::Align::Center)
                 .build();
             reschedule.add_css_class("flat");
@@ -2971,30 +2963,13 @@ impl Ui {
                 }
             });
 
-            let cancel = gtk::Button::builder()
+            let delete = gtk::Button::builder()
                 .icon_name("user-trash-symbolic")
-                .tooltip_text("Cancel")
+                .tooltip_text("Delete Scheduled Message")
                 .valign(gtk::Align::Center)
                 .build();
-            cancel.add_css_class("flat");
-            cancel.add_css_class("circular");
-            cancel.connect_clicked({
-                let ui = self.clone();
-                let id = scheduled.post.id.clone();
-                move |button| {
-                    button.set_sensitive(false);
-                    let client = ui.state.borrow().client.clone();
-                    let id = id.clone();
-                    let ui = ui.clone();
-                    runtime::spawn(
-                        async move { client.delete_scheduled_post(&id).await },
-                        move |result| match result {
-                            Ok(()) => ui.toast("Cancelled"),
-                            Err(e) => ui.toast_error("Could not cancel it", &e),
-                        },
-                    );
-                }
-            });
+            delete.add_css_class("flat");
+            delete.add_css_class("circular");
 
             let body = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
@@ -3009,27 +2984,86 @@ impl Ui {
                 .build();
             row.append(&body);
             row.append(&reschedule);
-            row.append(&cancel);
+            row.append(&delete);
             list.append(&row);
+
+            delete.connect_clicked({
+                let ui = self.clone();
+                let id = scheduled.post.id.clone();
+                let toasts = toasts.clone();
+                let pending = pending.clone();
+                let row = row.clone();
+                move |_| {
+                    row.set_visible(false);
+                    let toast = adw::Toast::builder()
+                        .title("Scheduled message deleted")
+                        .button_label("Undo")
+                        .build();
+                    let undone = Rc::new(std::cell::Cell::new(false));
+                    toast.connect_button_clicked({
+                        let undone = undone.clone();
+                        let row = row.clone();
+                        move |_| {
+                            undone.set(true);
+                            row.set_visible(true);
+                        }
+                    });
+                    toast.connect_dismissed({
+                        let ui = ui.clone();
+                        let id = id.clone();
+                        let row = row.clone();
+                        let pending = pending.clone();
+                        move |toast| {
+                            pending.borrow_mut().retain(|t| t != toast);
+                            if undone.get() {
+                                return;
+                            }
+                            let client = ui.state.borrow().client.clone();
+                            let id = id.clone();
+                            let ui = ui.clone();
+                            let row = row.clone();
+                            runtime::spawn(
+                                async move { client.delete_scheduled_post(&id).await },
+                                move |result| {
+                                    if let Err(e) = result {
+                                        row.set_visible(true);
+                                        ui.toast_error("Could not delete it", &e);
+                                    }
+                                },
+                            );
+                        }
+                    });
+                    pending.borrow_mut().push(toast.clone());
+                    toasts.add_toast(toast);
+                }
+            });
         }
 
-        let window = adw::Window::builder()
-            .title("Scheduled messages")
-            .transient_for(&self.window)
-            .modal(true)
-            .default_width(520)
-            .default_height(440)
-            .build();
-        let view = adw::ToolbarView::new();
-        view.add_top_bar(&adw::HeaderBar::new());
-        view.set_content(Some(
+        toasts.set_child(Some(
             &gtk::ScrolledWindow::builder()
                 .hscrollbar_policy(gtk::PolicyType::Never)
-                .child(&list)
+                .vexpand(true)
+                .child(&adw::Clamp::builder().maximum_size(560).child(&list).build())
                 .build(),
         ));
-        window.set_content(Some(&view));
-        window.present();
+        let view = adw::ToolbarView::new();
+        view.add_top_bar(&adw::HeaderBar::new());
+        view.set_content(Some(&toasts));
+        let dialog = adw::Dialog::builder()
+            .title("Scheduled Messages")
+            .content_width(520)
+            .content_height(440)
+            .child(&view)
+            .build();
+        // Closing the dialog is not undoing anything: deletes still waiting on
+        // their toast go through now rather than being lost with it.
+        dialog.connect_closed(move |_| {
+            let waiting: Vec<adw::Toast> = pending.borrow().clone();
+            for toast in waiting {
+                toast.dismiss();
+            }
+        });
+        dialog.present(Some(&self.window));
     }
 
     /// Signs out of this server, forgetting its token and its cached
