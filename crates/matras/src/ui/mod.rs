@@ -7650,10 +7650,12 @@ fn refresh_presence(ui: &Rc<Ui>) {
             statuses
         },
         move |statuses| {
-            if ui.state.borrow_mut().apply_statuses(statuses) {
-                ui.channels.refresh(&ui.state, &ui.avatars);
-                ui.refresh_messages();
-            }
+            ui.state.borrow_mut().apply_statuses(statuses);
+            // Unconditionally: a custom status that expired since the last
+            // tick sends no event, and only a redraw drops it. Both refreshes
+            // are revision-guarded, so rows that did not change stay put.
+            ui.channels.refresh(&ui.state, &ui.avatars);
+            ui.refresh_messages();
         },
     );
 }

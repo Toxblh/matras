@@ -68,9 +68,15 @@ impl User {
 
     /// The custom status lives in `props["customStatus"]` as a *JSON-encoded
     /// string*, not as a nested object.
+    /// The custom status, unless it has expired. The server clears an expired
+    /// one lazily, so the props keep it after `expires_at` has passed.
     pub fn custom_status(&self) -> Option<CustomStatus> {
         let raw = self.props.get("customStatus")?;
-        serde_json::from_str(raw).ok()
+        let status: CustomStatus = serde_json::from_str(raw).ok()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        (!status.expired_at(now)).then_some(status)
     }
 
     /// Best display name for the given teammate-name-display preference value
@@ -102,6 +108,59 @@ pub struct CustomStatus {
     pub duration: String,
     #[serde(default)]
     pub expires_at: Option<String>,
+}
+
+impl CustomStatus {
+    /// Same rule as the webapp's `isCustomStatusExpired`: "don't clear", or
+    /// no expiry at all, never expires. An expiry we cannot read keeps the
+    /// status rather than hiding something the user set.
+    pub fn expired_at(&self, now_unix: i64) -> bool {
+        if self.duration == "don't_clear" {
+            return false;
+        }
+        self.expires_at
+            .as_deref()
+            .and_then(parse_rfc3339)
+            .is_some_and(|expiry| now_unix >= expiry)
+    }
+}
+
+/// Unix seconds from an RFC 3339 timestamp as Go writes it:
+/// `2026-10-23T20:59:59.999Z` or with a `+03:00` offset.
+fn parse_rfc3339(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (hour, min, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    let mut rest = &s[19..];
+    if let Some(frac) = rest.strip_prefix('.') {
+        rest = frac.trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    let offset = match rest {
+        "Z" | "z" => 0,
+        _ => {
+            let sign = match rest.as_bytes().first()? {
+                b'+' => 1,
+                b'-' => -1,
+                _ => return None,
+            };
+            let h = rest.get(1..3)?.parse::<i64>().ok()?;
+            let m = rest.get(4..6)?.parse::<i64>().ok()?;
+            sign * (h * 3600 + m * 60)
+        }
+    };
+    // Days from civil (Howard Hinnant), proleptic Gregorian.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + hour * 3600 + min * 60 + sec - offset)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -166,4 +225,49 @@ pub struct UserAutocomplete {
     pub users: Vec<User>,
     #[serde(default)]
     pub out_of_channel: Vec<User>,
+}
+
+#[cfg(test)]
+mod custom_status_tests {
+    use super::*;
+
+    fn status(duration: &str, expires_at: Option<&str>) -> CustomStatus {
+        CustomStatus {
+            emoji: "palm_tree".into(),
+            duration: duration.into(),
+            expires_at: expires_at.map(Into::into),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn rfc3339_as_go_writes_it() {
+        assert_eq!(parse_rfc3339("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_rfc3339("2026-10-23T10:00:00Z"), Some(1_792_749_600));
+        assert_eq!(
+            parse_rfc3339("2026-10-23T10:00:00.999Z"),
+            Some(1_792_749_600)
+        );
+        assert_eq!(
+            parse_rfc3339("2026-10-23T13:00:00+03:00"),
+            Some(1_792_749_600)
+        );
+        assert_eq!(parse_rfc3339("garbage"), None);
+    }
+
+    #[test]
+    fn a_passed_expiry_hides_the_status() {
+        let now = 1_792_749_600;
+        let s = status("today", Some("2026-10-23T09:59:59Z"));
+        assert!(s.expired_at(now));
+        assert!(!status("today", Some("2026-10-23T10:00:01Z")).expired_at(now));
+    }
+
+    #[test]
+    fn dont_clear_missing_or_unreadable_expiry_keeps_it() {
+        let now = 1_792_749_600;
+        assert!(!status("don't_clear", Some("0001-01-01T00:00:00Z")).expired_at(now));
+        assert!(!status("today", None).expired_at(now));
+        assert!(!status("today", Some("soon")).expired_at(now));
+    }
 }
