@@ -838,7 +838,11 @@ impl ChatView {
 
         // Losing the socket is a state of the whole window, not an event, so
         // it gets a banner that stays up rather than a toast that scrolls by.
-        let connection = adw::Banner::builder().revealed(false).build();
+        // The text is a socket error, not markup.
+        let connection = adw::Banner::builder()
+            .use_markup(false)
+            .revealed(false)
+            .build();
 
         let conversation = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
