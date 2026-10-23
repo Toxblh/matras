@@ -92,7 +92,20 @@ fn persist_pending(server_url: &str, client_token: &str) {
         let _ = std::fs::create_dir_all(dir);
     }
     let json = serde_json::json!({ "server": server_url, "client_token": client_token });
-    if let Err(e) = std::fs::write(&path, json.to_string()) {
+    // 0600 like session.json: the token is a sign-in nonce, and the file
+    // outlives a browser that failed to open.
+    let written = {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .and_then(|mut f| f.write_all(json.to_string().as_bytes()))
+    };
+    if let Err(e) = written {
         tracing::warn!(error = %e, "could not persist the pending sign-in");
     }
 }
