@@ -573,10 +573,10 @@ fn attach_post_context_menu(
     menu_opened: &Rc<Cell<bool>>,
 ) {
     let built: Rc<std::cell::RefCell<Option<gtk::PopoverMenu>>> = Rc::default();
-    let open: Rc<dyn Fn(&gtk::Widget, f64, f64)> = Rc::new({
+    let open = Rc::new({
         let post = post.clone();
         let actions = actions.clone();
-        move |row, x, y| {
+        move |row: &gtk::Widget, x: f64, y: f64| {
             let mut slot = built.borrow_mut();
             let popover = slot.get_or_insert_with(|| {
                 let (menu, group) = post_menu(&post, &actions, mine);
