@@ -209,9 +209,19 @@ impl CallDock {
             move || on_host(HostAction::MuteOthers)
         });
         mute_others.set_visible(false);
-        let end_call = icon_button("window-close-symbolic", "End the call for everyone", {
+        let end_call = icon_button("window-close-symbolic", "End Call for Everyone", || {});
+        end_call.connect_clicked({
             let on_host = on_host_all.clone();
-            move || on_host(HostAction::EndCall)
+            move |button| {
+                let on_host = on_host.clone();
+                confirm(
+                    button,
+                    "End Call for Everyone?",
+                    "Everyone in the call will be disconnected",
+                    "End Call",
+                    move || on_host(HostAction::EndCall),
+                );
+            }
         });
         end_call.add_css_class("destructive-action");
         end_call.set_visible(false);
@@ -565,7 +575,22 @@ impl CallDock {
                                 HostAction::MakeHost => user_id.clone(),
                                 _ => session_id.clone(),
                             };
-                            move |_| on_host(target.clone(), action)
+                            let name = name.clone();
+                            move |button| {
+                                if !matches!(action, HostAction::Remove) {
+                                    on_host(target.clone(), action);
+                                    return;
+                                }
+                                let on_host = on_host.clone();
+                                let target = target.clone();
+                                confirm(
+                                    button,
+                                    &format!("Remove {name} From Call?"),
+                                    "They can join again later",
+                                    "Remove",
+                                    move || on_host(target.clone(), action),
+                                );
+                            }
                         });
                         row.append(&button);
                     }
@@ -591,6 +616,23 @@ fn icon_button(icon: &str, tooltip: &str, on_click: impl Fn() + 'static) -> gtk:
     button.add_css_class("circular");
     button.connect_clicked(move |_| on_click());
     button
+}
+
+/// Asks before a host action that throws other people out. No default
+/// response: Enter must not end anyone's call.
+fn confirm(
+    anchor: &impl IsA<gtk::Widget>,
+    heading: &str,
+    body: &str,
+    verb: &str,
+    on_confirm: impl Fn() + 'static,
+) {
+    let dialog = adw::AlertDialog::new(Some(heading), Some(body));
+    dialog.add_responses(&[("cancel", "Cancel"), ("confirm", verb)]);
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+    dialog.set_close_response("cancel");
+    dialog.connect_response(Some("confirm"), move |_, _| on_confirm());
+    dialog.present(Some(anchor));
 }
 
 fn set_state(button: &gtk::Button, on: bool, look: (&str, &str), class: &str) {
