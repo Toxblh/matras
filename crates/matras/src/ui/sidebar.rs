@@ -853,6 +853,7 @@ fn channel_row(
     if unread.mentions > 0 {
         let badge = gtk::Label::new(Some(&unread.mentions.to_string()));
         badge.add_css_class("mention-badge");
+        badge.set_tooltip_text(Some(&mention_count(unread.mentions)));
         if unread.urgent {
             badge.add_css_class("urgent");
         }
@@ -863,6 +864,7 @@ fn channel_row(
         let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
         dot.add_css_class("unread-dot");
         dot.add_css_class("dim-label");
+        dot.set_tooltip_text(Some("Unread"));
         row_box.append(&dot);
     }
 
@@ -883,7 +885,35 @@ fn channel_row(
     background.add_css_class("channel-row-background");
     background.append(&row_box);
 
-    gtk::ListBoxRow::builder().child(&background).build()
+    let row = gtk::ListBoxRow::builder().child(&background).build();
+    // The badge, the dot, the weight and the dimming are all visual; a
+    // screen reader gets the same facts as words.
+    let status = row_status(unread.mentions, unread.is_unread(), unread.muted, has_draft);
+    if !status.is_empty() {
+        row.update_property(&[gtk::accessible::Property::Description(&status)]);
+    }
+    row
+}
+
+fn mention_count(n: i64) -> String {
+    format!("{n} {}", super::message::plural(n, "mention", "mentions"))
+}
+
+/// What a channel row's indicators say, e.g. "3 mentions, muted".
+fn row_status(mentions: i64, unread: bool, muted: bool, draft: bool) -> String {
+    let mut parts = Vec::new();
+    if mentions > 0 {
+        parts.push(mention_count(mentions));
+    } else if unread {
+        parts.push("unread".to_string());
+    }
+    if muted {
+        parts.push("muted".to_string());
+    }
+    if draft {
+        parts.push("draft".to_string());
+    }
+    parts.join(", ")
 }
 
 fn channel_name_label(title: &str) -> gtk::Label {
@@ -1190,6 +1220,15 @@ impl Switcher {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn row_status_reads_the_indicators_out() {
+        use super::row_status;
+        assert_eq!(row_status(3, true, true, false), "3 mentions, muted");
+        assert_eq!(row_status(1, true, false, false), "1 mention");
+        assert_eq!(row_status(0, true, false, true), "unread, draft");
+        assert_eq!(row_status(0, false, false, false), "");
+    }
+
     use super::*;
     use mattermost_api::models::{ChannelMember, ClientConfig};
     use mattermost_api::Client;
