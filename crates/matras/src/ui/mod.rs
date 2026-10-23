@@ -2939,7 +2939,7 @@ impl Ui {
             async move { client.scheduled_posts_for_team(&team_id).await },
             move |result| match result {
                 Ok(value) => ui.show_scheduled(value),
-                Err(e) => ui.toast_error("Could not load them", &e),
+                Err(e) => ui.toast_error("Could not load scheduled messages", &e),
             },
         );
     }
