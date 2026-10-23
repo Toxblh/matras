@@ -74,9 +74,7 @@ pub struct ChatView {
     /// Kept so the menu can be rebuilt without losing the fixed entries.
     agent_actions: Rc<RefCell<Vec<gtk::gio::SimpleAction>>>,
     inbox_badge: gtk::Label,
-    call_banner: gtk::Box,
-    call_banner_label: gtk::Label,
-    join_button: gtk::Button,
+    call_banner: adw::Banner,
     stack: gtk::Stack,
     /// Runs only while the first page is visibly loading. A permanently
     /// spinning child keeps GTK's frame clock alive even after Stack hides it.
@@ -377,23 +375,14 @@ impl ChatView {
         header.pack_end(&inbox_button);
 
         // --- call banner
-        let call_banner_label = gtk::Label::builder().xalign(0.0).hexpand(true).build();
-        let call_banner = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(8)
-            .visible(false)
-            .build();
-        call_banner.add_css_class("call-banner");
-        call_banner.append(&gtk::Image::from_icon_name("call-start-symbolic"));
-        call_banner.append(&call_banner_label);
-
         // The banner is where you notice a call, so it is where joining it
         // belongs — the header button is for starting one.
-        let join_button = gtk::Button::with_label("Join");
-        join_button.add_css_class("pill");
-        join_button.add_css_class("call-banner-join");
-        join_button.connect_clicked(move |_| on_call());
-        call_banner.append(&join_button);
+        let call_banner = adw::Banner::builder()
+            .use_markup(false)
+            .button_label("Join")
+            .revealed(false)
+            .build();
+        call_banner.connect_button_clicked(move |_| on_call());
 
         // --- messages
         let messages = gtk::gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -923,8 +912,6 @@ impl ChatView {
             inbox_button,
             inbox_badge,
             call_banner,
-            call_banner_label,
-            join_button,
             stack,
             loading_spinner: spinner,
             spinner_epoch: Rc::new(Cell::new(0)),
@@ -1219,20 +1206,21 @@ impl ChatView {
             // with the banner instead of looking idle.
             set_active(&self.call_button, ongoing, "suggested-action");
         }
-        self.join_button.set_visible(!in_call);
+        self.call_banner
+            .set_button_label((!in_call).then_some("Join"));
     }
 
     pub fn set_call_in_progress(&self, participants: Option<usize>) {
         match participants {
             Some(n) => {
-                self.call_banner_label.set_text(&match n {
+                self.call_banner.set_title(&match n {
                     0 => "A call is starting".to_string(),
                     1 => "1 person is in a call".to_string(),
                     n => format!("{n} people are in a call"),
                 });
-                self.call_banner.set_visible(true);
+                self.call_banner.set_revealed(true);
             }
-            None => self.call_banner.set_visible(false),
+            None => self.call_banner.set_revealed(false),
         }
     }
 

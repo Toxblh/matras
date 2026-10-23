@@ -278,27 +278,6 @@ link:visited {
   font-size: 0.8em;
 }
 
-/* The "call in progress" strip above the message list. */
-.call-banner {
-  padding: 6px 12px;
-  background-color: @accent_bg_color;
-  color: @accent_fg_color;
-}
-
-/* On an accent-coloured banner the default button background disappears, so
-   the join button borrows the banner's own foreground for its outline. */
-.call-banner-join {
-  padding: 2px 16px;
-  min-height: 24px;
-  color: @accent_fg_color;
-  background-color: alpha(@accent_fg_color, 0.15);
-  border: 1px solid alpha(@accent_fg_color, 0.5);
-}
-
-.call-banner-join:hover {
-  background-color: alpha(@accent_fg_color, 0.3);
-}
-
 /* ── message affordances ──────────────────────────────────────────────
    The avatar and the author name are both buttons, because both open the
    profile card. They must not *look* like buttons until pointed at. */
