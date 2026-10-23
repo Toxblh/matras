@@ -1404,6 +1404,60 @@ impl Ui {
         self.toasts.add_toast(plain_toast(message));
     }
 
+    /// The start failed. With last time's channels on screen that is a state
+    /// of the connection, said by its banner, with a Retry on the toast; with
+    /// nothing saved there is nothing to show, so the whole window says why
+    /// and offers to try again.
+    fn show_load_failure(self: &Rc<Self>, error: &mattermost_api::Error, had_cache: bool) {
+        let reason = login::describe_failure(error);
+        let retry = {
+            let ui = self.clone();
+            move || bootstrap(ui.clone(), None)
+        };
+        if had_cache {
+            self.chat
+                .set_connection_problem(Some("Offline — showing saved messages"));
+            let toast = adw::Toast::builder()
+                .title(format!("Could not load your account: {reason}"))
+                .use_markup(false)
+                .button_label("Retry")
+                .timeout(0)
+                .build();
+            toast.connect_button_clicked(move |_| retry());
+            self.toasts.add_toast(toast);
+            return;
+        }
+
+        let Some(session) = self.toasts.child() else {
+            return;
+        };
+        let button = gtk::Button::builder()
+            .label("Retry")
+            .halign(gtk::Align::Center)
+            .build();
+        button.add_css_class("pill");
+        button.add_css_class("suggested-action");
+        let page = adw::StatusPage::builder()
+            .icon_name("network-offline-symbolic")
+            .title("Could Not Load Your Account")
+            .description(glib::markup_escape_text(&reason))
+            .child(&button)
+            .vexpand(true)
+            .build();
+        let view = adw::ToolbarView::new();
+        view.add_top_bar(&adw::HeaderBar::new());
+        view.set_content(Some(&page));
+        self.toasts.set_child(Some(&view));
+        button.connect_clicked({
+            let toasts = self.toasts.clone();
+            move |_| {
+                toasts.set_child(Some(&session));
+                retry();
+            }
+        });
+        button.grab_focus();
+    }
+
     /// The account's "Notification sound" switch; on unless turned off.
     fn notification_sound(&self) -> bool {
         self.state
@@ -7248,6 +7302,8 @@ async fn hydrate_authors(
 fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
     let client = ui.state.borrow().client.clone();
     let pointer = crate::cache::load(client.site_url());
+    // Whether last time's picture will be on screen if the server is not.
+    let had_cache = pointer.is_some();
 
     // Where the reader was sitting in each channel, put back before anything
     // can open one. Both the store load below and the first `select_channel`
@@ -7396,7 +7452,7 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                             crate::cache::clear();
                             fallback();
                         }
-                        _ => ui.toast_error("Could not load your account", &e),
+                        _ => ui.show_load_failure(&e, had_cache),
                     }
                     return;
                 }
