@@ -33,13 +33,13 @@ impl Switcher {
     /// `on_search` fires as the user types (already the trimmed term).
     /// `on_pick` fires with the chosen target and the window closes itself.
     pub fn present(
-        parent: &impl IsA<gtk::Window>,
+        parent: &impl IsA<gtk::Widget>,
         on_search: impl Fn(String) + 'static,
         on_pick: impl Fn(Target) + 'static,
     ) -> Self {
         let search = gtk::SearchEntry::builder()
             .placeholder_text("Jump to a channel or person")
-            .width_request(360)
+            .hexpand(true)
             .build();
         let on_search = Rc::new(on_search);
         search.connect_search_changed({
@@ -47,17 +47,10 @@ impl Switcher {
             move |entry| on_search(entry.text().trim().to_string())
         });
 
-        let list = gtk::ListBox::builder()
-            .selection_mode(gtk::SelectionMode::Single)
-            .valign(gtk::Align::Start)
-            .build();
-        list.add_css_class("boxed-list");
-        let empty = gtk::Label::builder()
-            .label("No matches")
-            .margin_top(24)
-            .build();
-        empty.add_css_class("dim-label");
-        list.set_placeholder(Some(&empty));
+        // A spinner until the first answer, then "No Matches" when there is
+        // none (see `set_results`).
+        let list = super::dialogs::loading_list();
+        list.set_selection_mode(gtk::SelectionMode::Single);
 
         let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -73,14 +66,12 @@ impl Switcher {
         view.add_top_bar(&adw::HeaderBar::builder().title_widget(&search).build());
         view.set_content(Some(&scroller));
 
-        let window = adw::Window::builder()
-            .title("Quick switcher")
-            .default_width(560)
-            .default_height(420)
-            .modal(true)
+        let window = adw::Dialog::builder()
+            .title("Jump To")
+            .content_width(560)
+            .content_height(420)
+            .child(&view)
             .build();
-        window.set_transient_for(Some(parent));
-        window.set_content(Some(&view));
 
         let targets: Rc<RefCell<Vec<Target>>> = Rc::default();
 
@@ -135,7 +126,7 @@ impl Switcher {
         });
         search.add_controller(keys);
 
-        window.present();
+        window.present(Some(parent));
         search.grab_focus();
         // Ask once on open: the recent conversations are worth showing before
         // anyone types, and an empty window looks broken.
@@ -146,10 +137,7 @@ impl Switcher {
 
     /// Results: (target, primary label, secondary label, icon name).
     pub fn set_results(&self, items: Vec<(Target, String, String, String)>) {
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
-        }
-
+        super::dialogs::reset_list(&self.list, "system-search-symbolic", "No Matches");
         let mut targets = self.targets.borrow_mut();
         targets.clear();
         for (target, primary, secondary, icon) in items {
