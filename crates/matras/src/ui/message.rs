@@ -564,9 +564,7 @@ fn body_with_hover_actions(body: &gtk::Widget, actions: &gtk::Widget) -> gtk::Wi
 }
 
 fn select_text_at(row: &gtk::Widget, x: f64, y: f64) -> Option<gtk::Label> {
-    let Some(mut widget) = row.pick(x, y, gtk::PickFlags::DEFAULT) else {
-        return None;
-    };
+    let mut widget = row.pick(x, y, gtk::PickFlags::DEFAULT)?;
     loop {
         if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
             label.set_selectable(true);
@@ -2613,7 +2611,7 @@ mod tests {
 
     #[test]
     fn long_code_lines_scroll_without_widening_the_message_pane() {
-        assert!(!CODE_SCROLLER_PROPAGATES_NATURAL_WIDTH);
+        const { assert!(!CODE_SCROLLER_PROPAGATES_NATURAL_WIDTH) };
     }
 
     fn names(markup: &str) -> Vec<&str> {

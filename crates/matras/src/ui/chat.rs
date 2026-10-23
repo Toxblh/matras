@@ -2317,7 +2317,7 @@ mod tests {
         let menu = composer_options_menu(&priorities);
         let model: &gtk::gio::MenuModel = menu.upcast_ref();
 
-        assert!(COMPOSER_OPTIONS_BUTTON_WIDTH <= 40);
+        const { assert!(COMPOSER_OPTIONS_BUTTON_WIDTH <= 40) };
         assert_eq!(model.n_items(), 3);
         assert_eq!(
             model.item_attribute_value(0, "label", None).unwrap().str(),

@@ -215,7 +215,7 @@ fn write_to(file: &std::path::Path, server: &str, token: &str) -> std::io::Resul
         .create(true)
         .truncate(true)
         .mode(0o600)
-        .open(&file)?;
+        .open(file)?;
     f.write_all(
         json!({ "server": server, "token": token })
             .to_string()
