@@ -352,7 +352,9 @@ impl AppState {
     }
 
     /// How a user should be named in this server's configured style.
-    pub fn apply_statuses(&mut self, statuses: Vec<Status>) {
+    /// Whether any presence dot changed colour.
+    pub fn apply_statuses(&mut self, statuses: Vec<Status>) -> bool {
+        let mut changed = false;
         for status in statuses {
             // The last-activity stamp comes along with presence and is the
             // only thing that can answer "when were they last here".
@@ -360,9 +362,26 @@ impl AppState {
                 self.last_seen
                     .insert(status.user_id.clone(), status.last_activity_at);
             }
-            self.statuses
-                .insert(status.user_id.clone(), status.presence());
+            let presence = status.presence();
+            changed |= self.statuses.insert(status.user_id, presence) != Some(presence);
         }
+        changed
+    }
+
+    /// Whose presence to ask the server about again: me (the account button),
+    /// every DM partner, and everyone whose dot has been drawn at all
+    /// (message authors, profiles).
+    pub fn presence_watch_ids(&self) -> Vec<String> {
+        let mut ids: HashSet<String> = self.statuses.keys().cloned().collect();
+        ids.insert(self.me.id.clone());
+        ids.extend(
+            self.channels
+                .values()
+                .filter_map(|c| c.dm_teammate_id(&self.me.id))
+                .map(str::to_string),
+        );
+        ids.remove("");
+        ids.into_iter().collect()
     }
 
     pub fn presence(&self, user_id: &str) -> Presence {
@@ -557,6 +576,47 @@ mod tests {
             create_at: at,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn polled_statuses_report_changes_and_cover_dm_partners() {
+        let client = Client::new("http://x.test").unwrap();
+        let me = User {
+            id: "me".into(),
+            ..Default::default()
+        };
+        let mut st = AppState::new(client, me, ClientConfig::default(), false);
+        let dm = Channel {
+            id: "dm".into(),
+            r#type: ChannelType::Direct,
+            name: "me__olga".into(),
+            ..Default::default()
+        };
+        st.channels.insert(dm.id.clone(), dm);
+        let status = |user: &str, s: &str| Status {
+            user_id: user.into(),
+            status: s.into(),
+            ..Default::default()
+        };
+
+        // Never seen yet, but a DM row shows her dot and the account button
+        // shows mine: ask about both.
+        let mut ids = st.presence_watch_ids();
+        ids.sort();
+        assert_eq!(ids, ["me", "olga"]);
+
+        assert!(st.apply_statuses(vec![status("olga", "online"), status("bob", "online")]));
+        assert!(
+            !st.apply_statuses(vec![status("olga", "online")]),
+            "no change"
+        );
+        // The auto-away the websocket never tells other users about.
+        assert!(st.apply_statuses(vec![status("olga", "away")]));
+        assert_eq!(st.presence("olga"), Presence::Away);
+
+        let mut ids = st.presence_watch_ids();
+        ids.sort();
+        assert_eq!(ids, ["bob", "me", "olga"]);
     }
 
     #[test]

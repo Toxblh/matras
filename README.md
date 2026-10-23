@@ -189,7 +189,9 @@ MATRAS_USER=anton MATRAS_PASSWORD=test \
 ```
 
 A background "colleague" posts every 12 seconds (`MM_BOT_SECONDS` to change it)
-so live updates are visible with one client open. The same three environment
+so live updates are visible with one client open. Lena flips between online
+and away every 90 seconds (`MM_AWAY_SECONDS`) without a websocket event, as a
+real server does for other people's auto-away. The same three environment
 variables work against a real server.
 
 > On a minimal system, install `librsvg2-common` too — without the SVG pixbuf

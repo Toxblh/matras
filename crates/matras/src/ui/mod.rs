@@ -6806,6 +6806,8 @@ impl Ui {
                     // default rather than an Option compare.
                     if st.statuses.insert(user_id, presence).unwrap_or_default() != presence {
                         redraw_messages = true;
+                        // DM rows and the account button carry the same dot.
+                        redraw_sidebar = true;
                     }
                 }
                 // Another session marked a channel unread; mirror the counters
@@ -7323,6 +7325,8 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
             let ws = runtime::with_runtime(|| WebSocket::connect(ws_url, token));
             ui.state.borrow_mut().ws = Some(ws.clone());
 
+            poll_presence(&ui);
+
             let subscription = ws.subscribe();
             runtime::spawn_stream(
                 move |tx| async move {
@@ -7369,6 +7373,58 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                     }
                 },
             );
+        },
+    );
+}
+
+/// How often presence is re-asked for; the webapp's `STATUS_INTERVAL`.
+const PRESENCE_POLL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Keeps other people's presence dots honest.
+///
+/// The server publishes `status_change` to the affected user's own sessions
+/// only (`PlatformService::BroadcastStatus` sets the event's user id), so
+/// someone else going away, auto-away included, never reaches this socket.
+/// Mattermost's own clients poll `/users/status/ids` once a minute for the
+/// same reason; without this a long-running window keeps the green dot it saw
+/// at startup. The first round runs straight away: nothing else ever asks
+/// for my own status, so the account button would read offline until then.
+fn poll_presence(ui: &Rc<Ui>) {
+    refresh_presence(ui);
+    let weak = Rc::downgrade(ui);
+    glib::timeout_add_local(PRESENCE_POLL, move || {
+        let Some(ui) = weak.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        refresh_presence(&ui);
+        glib::ControlFlow::Continue
+    });
+}
+
+fn refresh_presence(ui: &Rc<Ui>) {
+    let (client, ids) = {
+        let st = ui.state.borrow();
+        (st.client.clone(), st.presence_watch_ids())
+    };
+    if ids.is_empty() {
+        return;
+    }
+    let ui = ui.clone();
+    runtime::spawn(
+        async move {
+            let mut statuses = Vec::new();
+            // Batched only to keep one request body modest; a long session
+            // collects every author it has drawn.
+            for chunk in ids.chunks(200) {
+                statuses.extend(client.statuses_by_ids(chunk).await.unwrap_or_default());
+            }
+            statuses
+        },
+        move |statuses| {
+            if ui.state.borrow_mut().apply_statuses(statuses) {
+                ui.channels.refresh(&ui.state, &ui.avatars);
+                ui.refresh_messages();
+            }
         },
     );
 }
