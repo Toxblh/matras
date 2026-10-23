@@ -2518,7 +2518,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "matras"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "ashpd",
  "async-channel",
@@ -2545,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "matras-testserver"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "mattermost-api"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "futures-util",
  "rand 0.9.5",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "mattermost-calls"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "flate2",
  "futures-util",

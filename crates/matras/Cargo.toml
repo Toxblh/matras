@@ -17,8 +17,8 @@ gstreamer = "0.24.5"
 gstreamer-app = "0.24.5"
 gstreamer-video = "0.24.5"
 gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
-mattermost-api = { version = "0.1.0", path = "../mattermost-api" }
-mattermost-calls = { version = "0.1.0", path = "../mattermost-calls" }
+mattermost-api = { path = "../mattermost-api" }
+mattermost-calls = { path = "../mattermost-calls" }
 oo7 = { version = "0.5.0", default-features = false, features = ["tokio", "native_crypto"] }
 opus = "0.3.1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
