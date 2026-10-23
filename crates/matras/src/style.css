@@ -82,7 +82,6 @@
   min-height: 8px;
   border-radius: 999px;
   background-color: currentColor;
-  opacity: 0.55;
 }
 
 /* Who is in a call, in the channel row. */
@@ -100,13 +99,10 @@
   font-size: 0.85rem;
 }
 
-/* Unread channels are heavier; muted ones recede. Mentions get a pill. */
+/* Unread channels are heavier; muted ones recede (.dim-label). Mentions
+   get a pill. */
 .channel-row-unread {
   font-weight: bold;
-}
-
-.channel-row-muted {
-  opacity: 0.55;
 }
 
 .mention-badge {
@@ -147,7 +143,6 @@
 
 .message-timestamp {
   font-size: 0.8rem;
-  opacity: 0.6;
 }
 
 .message-body {
@@ -181,7 +176,6 @@ link:visited {
 
 .message-system {
   font-style: italic;
-  opacity: 0.7;
 }
 
 .message-pending {
@@ -190,7 +184,6 @@ link:visited {
 
 .day-separator {
   font-size: 0.8rem;
-  opacity: 0.7;
   margin: 12px 0 4px 0;
 }
 
@@ -376,7 +369,6 @@ link:visited {
 .reaction-count {
   font-size: 0.75rem;
   font-weight: bold;
-  opacity: 0.75;
 }
 
 .emoji-button {

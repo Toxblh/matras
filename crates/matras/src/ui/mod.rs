@@ -2185,6 +2185,7 @@ impl Ui {
                 .xalign(0.0)
                 .build();
             when.add_css_class("message-timestamp");
+            when.add_css_class("dim-label");
 
             let text = gtk::Label::builder()
                 .label(version.source_text())
@@ -2906,6 +2907,7 @@ impl Ui {
                 .xalign(0.0)
                 .build();
             when.add_css_class("message-timestamp");
+            when.add_css_class("dim-label");
 
             let text = gtk::Label::builder()
                 .label(&scheduled.post.message)

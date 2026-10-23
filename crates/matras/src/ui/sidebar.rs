@@ -818,6 +818,7 @@ fn channel_row(
         // enough to notice, not enough to demand a number be read.
         let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
         dot.add_css_class("unread-dot");
+        dot.add_css_class("dim-label");
         row_box.append(&dot);
     }
 
@@ -828,6 +829,7 @@ fn channel_row(
     }
     if unread.muted {
         row_box.add_css_class("channel-row-muted");
+        row_box.add_css_class("dim-label");
     }
 
     // Paint selection/hover on a wrapper around the content margins. This
@@ -1126,6 +1128,7 @@ impl Switcher {
                 } else if *messages > 0 {
                     let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
                     dot.add_css_class("unread-dot");
+                    dot.add_css_class("dim-label");
                     row_box.append(&dot);
                 }
             }

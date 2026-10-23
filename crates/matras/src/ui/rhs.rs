@@ -1053,6 +1053,7 @@ fn inbox_row(
 
     let when = gtk::Label::new(Some(&message::format_relative(at)));
     when.add_css_class("message-timestamp");
+    when.add_css_class("dim-label");
     when.add_css_class("numeric");
     heading.append(&when);
 
@@ -1083,6 +1084,7 @@ fn inbox_row(
             message::plural(replies, "reply", "replies")
         )));
         count.add_css_class("message-timestamp");
+        count.add_css_class("dim-label");
         count.add_css_class("numeric");
         footer.append(&count);
 

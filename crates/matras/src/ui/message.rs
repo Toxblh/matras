@@ -248,6 +248,7 @@ pub fn build(
             .xalign(0.0)
             .build();
         time.add_css_class("message-timestamp");
+        time.add_css_class("dim-label");
         time.add_css_class("numeric");
 
         let meta = gtk::Box::builder()
@@ -308,6 +309,7 @@ pub fn build(
     if post.is_edited() {
         let edited = gtk::Label::builder().label("(edited)").xalign(0.0).build();
         edited.add_css_class("message-timestamp");
+        edited.add_css_class("dim-label");
         body.append(&edited);
     }
 
@@ -889,6 +891,7 @@ fn permalink_preview(
     who.add_css_class("message-author");
     let when = gtk::Label::new(Some(&format_time(quoted.create_at)));
     when.add_css_class("message-timestamp");
+    when.add_css_class("dim-label");
     when.add_css_class("numeric");
 
     let header = gtk::Box::builder()
@@ -1921,6 +1924,7 @@ fn reaction_strip(
         content.append(&emoji_widget(&name, avatars));
         let n = gtk::Label::new(Some(&count.to_string()));
         n.add_css_class("reaction-count");
+        n.add_css_class("dim-label");
         content.append(&n);
 
         let (names, unresolved) = reaction_names(&group, &me, state);
