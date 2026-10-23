@@ -166,10 +166,9 @@ link:visited {
   text-decoration: none;
 }
 
-/* A fenced code block. Monospace, on its own tinted panel, so it reads as
-   something quoted rather than as more prose. */
+/* A fenced code block (`.monospace` comes from Adwaita), on its own tinted
+   panel, so it reads as something quoted rather than as more prose. */
 .message-code {
-  font-family: monospace;
   font-size: 0.9rem;
   padding: 6px 8px;
 }

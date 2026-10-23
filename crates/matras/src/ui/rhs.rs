@@ -511,7 +511,7 @@ impl RightPanel {
         if st.search_results.is_empty() {
             self.search_list.append(
                 &adw::StatusPage::builder()
-                    .icon_name("system-search-symbolic")
+                    .icon_name("edit-find-symbolic")
                     .title("No Results Found")
                     .description("Try a different search")
                     .css_classes(["compact"])
@@ -1053,6 +1053,7 @@ fn inbox_row(
 
     let when = gtk::Label::new(Some(&message::format_relative(at)));
     when.add_css_class("message-timestamp");
+    when.add_css_class("numeric");
     heading.append(&when);
 
     let preview = gtk::Label::builder()
@@ -1082,6 +1083,7 @@ fn inbox_row(
             message::plural(replies, "reply", "replies")
         )));
         count.add_css_class("message-timestamp");
+        count.add_css_class("numeric");
         footer.append(&count);
 
         if unread_mentions > 0 {
@@ -1285,6 +1287,7 @@ fn empty_state(icon: &str, title: &str, description: &str) -> gtk::Widget {
         .title(title)
         .description(description)
         .vexpand(true)
+        .css_classes(["compact"])
         .build()
         .upcast()
 }

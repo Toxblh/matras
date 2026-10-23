@@ -248,6 +248,7 @@ pub fn build(
             .xalign(0.0)
             .build();
         time.add_css_class("message-timestamp");
+        time.add_css_class("numeric");
 
         let meta = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
@@ -888,6 +889,7 @@ fn permalink_preview(
     who.add_css_class("message-author");
     let when = gtk::Label::new(Some(&format_time(quoted.create_at)));
     when.add_css_class("message-timestamp");
+    when.add_css_class("numeric");
 
     let header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -1258,6 +1260,7 @@ fn render_block(
             label.set_text(&text);
             label.set_wrap(false);
             label.add_css_class("message-code");
+            label.add_css_class("monospace");
             code_scroller(&label).upcast()
         }
     }
