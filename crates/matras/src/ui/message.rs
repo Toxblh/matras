@@ -1108,13 +1108,16 @@ fn save_attachment(
     let client = state.borrow().client.clone();
     let resources = resources.clone();
     let file_id = file.id.clone();
+    let toast_parent = parent.clone();
 
     dialog.save(
-        parent.as_ref(),
+        toast_parent.as_ref(),
         None::<&gtk::gio::Cancellable>,
         move |result| {
             let Ok(target) = result else { return };
             let Some(path) = target.path() else { return };
+            let saved = saved_toast(&path);
+            let parent = parent.clone();
             let client = client.clone();
             let resources = resources.clone();
             let file_id = file_id.clone();
@@ -1131,14 +1134,39 @@ fn save_attachment(
                         .await
                         .map_err(|e| e.to_string())
                 },
-                |result| {
-                    if let Err(e) = result {
-                        tracing::warn!(error = %e, "could not save the attachment");
+                move |result| {
+                    let title = match result {
+                        Ok(()) => saved,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "could not save the attachment");
+                            "Could not save file".to_string()
+                        }
+                    };
+                    if let Some(parent) = parent {
+                        window_toast(&parent, &title);
                     }
                 },
             );
         },
     );
+}
+
+/// The toast title after a file is written: "Saved to" and the file name.
+pub(super) fn saved_toast(path: &std::path::Path) -> String {
+    let name = path.file_name().unwrap_or(path.as_os_str());
+    format!("Saved to {}", name.to_string_lossy())
+}
+
+/// Shows a plain-text toast in the window's toast overlay. The overlay is the
+/// window content, or the main child of the overlay a lightbox puts there.
+pub(super) fn window_toast(window: &adw::ApplicationWindow, title: &str) {
+    let mut content = window.content();
+    if let Some(overlay) = content.clone().and_downcast::<gtk::Overlay>() {
+        content = overlay.child();
+    }
+    if let Some(toasts) = content.and_downcast::<adw::ToastOverlay>() {
+        toasts.add_toast(adw::Toast::builder().title(title).use_markup(false).build());
+    }
 }
 
 /// Opens the full-size image in its own window. The original is behind the

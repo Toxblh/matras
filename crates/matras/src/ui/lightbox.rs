@@ -123,7 +123,8 @@ pub fn show(parent: &adw::ApplicationWindow, title: &str, texture: &gtk::gdk::Te
                 .initial_name(&name)
                 .modal(true)
                 .build();
-            let window = button.root().and_downcast::<gtk::Window>();
+            let window = button.root().and_downcast::<adw::ApplicationWindow>();
+            let toast_window = window.clone();
             let texture = texture.clone();
             dialog.save(
                 window.as_ref(),
@@ -133,8 +134,15 @@ pub fn show(parent: &adw::ApplicationWindow, title: &str, texture: &gtk::gdk::Te
                         return; // Cancelled, which is not an error.
                     };
                     let Some(path) = file.path() else { return };
-                    if let Err(e) = texture.save_to_png(&path) {
-                        tracing::warn!(error = %e, ?path, "could not write the image");
+                    let title = match texture.save_to_png(&path) {
+                        Ok(()) => super::message::saved_toast(&path),
+                        Err(e) => {
+                            tracing::warn!(error = %e, ?path, "could not write the image");
+                            "Could not save file".to_string()
+                        }
+                    };
+                    if let Some(window) = &toast_window {
+                        super::message::window_toast(window, &title);
                     }
                 },
             );
