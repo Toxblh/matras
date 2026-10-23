@@ -230,6 +230,7 @@ impl RightPanel {
             .left_margin(8)
             .right_margin(8)
             .build();
+        thread_entry.update_property(&[gtk::accessible::Property::Label("Reply")]);
         let entry_frame = gtk::Frame::builder()
             .hexpand(true)
             .child(&thread_entry)

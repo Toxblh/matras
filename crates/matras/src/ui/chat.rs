@@ -628,6 +628,7 @@ impl ChatView {
             .left_margin(8)
             .right_margin(8)
             .build();
+        entry.update_property(&[gtk::accessible::Property::Label("Message")]);
 
         let entry_frame = build_composer_frame(&entry);
         entry_frame.add_css_class("composer-entry");
