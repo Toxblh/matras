@@ -68,7 +68,9 @@ pub struct ChatView {
     complete: Rc<super::autocomplete::Autocomplete>,
     /// The priority chosen for the next message, as a stateful action.
     priority_action: gtk::gio::SimpleAction,
-    agent_button: gtk::MenuButton,
+    channel_button: gtk::MenuButton,
+    /// The agent entries of the channel menu; empty when there are no agents.
+    agent_section: gtk::gio::Menu,
     /// Kept so the menu can be rebuilt without losing the fixed entries.
     agent_actions: Rc<RefCell<Vec<gtk::gio::SimpleAction>>>,
     inbox_badge: gtk::Label,
@@ -337,20 +339,13 @@ impl ChatView {
         inbox_button.connect_clicked(move |_| on_inbox());
 
         let header = adw::HeaderBar::builder().title_widget(&title_box).build();
-        // Only there when a server actually has an agent to ask. A menu
-        // rather than a button because there are two different things to want
-        // from an agent: a summary of here, or a conversation with it.
-        let agent_button = gtk::MenuButton::builder()
-            .icon_name("bot-symbolic")
-            .tooltip_text("Agents")
-            .visible(false)
-            .build();
-        agent_button.add_css_class("flat");
+        // Agents live in the channel menu, in a section that stays empty
+        // unless the server actually has one to ask: a summary of here, or a
+        // conversation with it. The header keeps room for the title on a phone.
         let agent_actions = gtk::gio::SimpleActionGroup::new();
         let catch_up = gtk::gio::SimpleAction::new("catch-up", None);
         catch_up.connect_activate(move |_, _| on_agent());
         agent_actions.add_action(&catch_up);
-        agent_button.insert_action_group("agent", Some(&agent_actions));
 
         // What you do to *this* channel, as opposed to the message under the
         // pointer or the list in the sidebar.
@@ -360,6 +355,8 @@ impl ChatView {
         channel_menu.append(Some("Bookmarks…"), Some("win.channel-bookmarks"));
         channel_menu.append(Some("Pinned Messages"), Some("win.pinned-posts"));
         channel_menu.append(Some("Notifications…"), Some("win.channel-notifications"));
+        let agent_section = gtk::gio::Menu::new();
+        channel_menu.append_section(None, &agent_section);
         let danger = gtk::gio::Menu::new();
         danger.append(Some("Leave Channel…"), Some("win.leave-channel"));
         danger.append(Some("Archive Channel…"), Some("win.archive-channel"));
@@ -370,10 +367,10 @@ impl ChatView {
             .menu_model(&channel_menu)
             .build();
         channel_button.add_css_class("flat");
+        channel_button.insert_action_group("agent", Some(&agent_actions));
 
         header.pack_end(&channel_button);
         header.pack_end(&call_button);
-        header.pack_end(&agent_button);
         header.pack_end(&inbox_button);
 
         // --- call banner
@@ -929,7 +926,8 @@ impl ChatView {
             loading_spinner: spinner,
             complete,
             priority_action,
-            agent_button,
+            channel_button,
+            agent_section,
             agent_actions: Rc::new(RefCell::new(vec![catch_up.clone()])),
             typing,
             attachments,
@@ -1018,13 +1016,12 @@ impl ChatView {
     }
 
     pub fn set_agents(&self, bots: &[(String, String)], on_open: impl Fn(String) + 'static) {
-        self.agent_button.set_visible(!bots.is_empty());
+        self.agent_section.remove_all();
         if bots.is_empty() {
             return;
         }
-
-        let menu = gtk::gio::Menu::new();
-        menu.append(Some("Catch Me Up"), Some("agent.catch-up"));
+        self.agent_section
+            .append(Some("Catch Me Up"), Some("agent.catch-up"));
 
         let chats = gtk::gio::Menu::new();
         let on_open = Rc::new(on_open);
@@ -1040,7 +1037,8 @@ impl ChatView {
             group.add_action(&action);
             chats.append(Some(name), Some(&format!("agent.{action_name}")));
         }
-        menu.append_section(None, &chats);
+        self.agent_section
+            .append_submenu(Some("Chat With Agent"), &chats);
 
         // Rebuilding replaces the action group, so the fixed entries have to
         // be carried over or "Catch me up" stops working after the first
@@ -1048,8 +1046,8 @@ impl ChatView {
         for action in self.agent_actions.borrow().iter() {
             group.add_action(action);
         }
-        self.agent_button.set_menu_model(Some(&menu));
-        self.agent_button.insert_action_group("agent", Some(&group));
+        self.channel_button
+            .insert_action_group("agent", Some(&group));
     }
 
     /// Redraws the row of files waiting to go out with the next message.
