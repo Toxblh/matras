@@ -237,6 +237,19 @@ fn show_error(label: &gtk::Label, message: &str) {
     label.set_visible(true);
 }
 
+/// [`describe`] for a request made inside a session, as a toast says it: a
+/// 401 there is a session that ran out, not a mistyped password.
+pub fn describe_failure(error: &Error) -> String {
+    match error {
+        Error::Api(app) if app.status_code == 401 => "The session has expired".to_string(),
+        e if e.is_cert_failure() => "The server's certificate is not trusted".to_string(),
+        Error::Http(e) if e.is_connect() || e.is_timeout() => {
+            "Could not reach the server".to_string()
+        }
+        other => describe(other),
+    }
+}
+
 /// Turns an API error into something worth showing a person.
 pub fn describe(error: &Error) -> String {
     match error {

@@ -5,10 +5,17 @@
 //! in [`super`], where the client and the action loop already live, and it
 //! means these can be read (and moved) without tracing a request through them.
 //!
-//! libadwaita is pinned to 1.5, so the dialogs are [`adw::MessageDialog`] —
-//! `AlertDialog`, which replaces it, is 1.6.
+//! Three shapes, as the GNOME HIG has them (libadwaita 1.5):
+//! - a question about something that cannot be undone is an
+//!   [`adw::AlertDialog`] — see [`confirm`];
+//! - a form is an [`adw::Dialog`] with Cancel and a verb in its header — see
+//!   [`form`];
+//! - a list to browse is an [`adw::Dialog`] with a plain header — see
+//!   [`list_dialog`].
+//!
+//! On a phone all three become bottom sheets, and Escape closes them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -30,12 +37,94 @@ const ACCOUNT_LEVELS: [(&str, &str); 3] = [
     ("none", "Nothing"),
 ];
 
+/// Asks before something that cannot be taken back. `heading` is a question
+/// ("Delete Message?"), `body` one sentence of consequence, `verb` the button.
+///
+/// There is deliberately no default response: Enter must not be the key that
+/// deletes something.
+pub fn confirm(
+    parent: &impl IsA<gtk::Widget>,
+    heading: &str,
+    body: &str,
+    verb: &str,
+    on_confirm: impl Fn() + 'static,
+) {
+    let dialog = adw::AlertDialog::new(Some(heading), Some(body));
+    dialog.add_responses(&[("cancel", "Cancel"), ("confirm", verb)]);
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+    dialog.set_close_response("cancel");
+    dialog.connect_response(None, move |_, response| {
+        if response == "confirm" {
+            on_confirm();
+        }
+    });
+    dialog.present(Some(parent));
+}
+
+/// A dialog that asks for something: Cancel at the start of the header, the
+/// suggested `verb` at the end, `content` scrolling underneath. The caller
+/// wires the verb button (and closes the dialog from it).
+pub fn form(
+    title: &str,
+    verb: &str,
+    content: &impl IsA<gtk::Widget>,
+) -> (adw::Dialog, gtk::Button) {
+    let cancel = gtk::Button::with_label("Cancel");
+    let submit = gtk::Button::with_label(verb);
+    submit.add_css_class("suggested-action");
+
+    let header = adw::HeaderBar::builder()
+        .show_end_title_buttons(false)
+        .show_start_title_buttons(false)
+        .build();
+    header.pack_start(&cancel);
+    header.pack_end(&submit);
+
+    let clamp = adw::Clamp::builder()
+        .maximum_size(460)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_top(12)
+        .margin_bottom(24)
+        .child(content)
+        .build();
+    let view = adw::ToolbarView::new();
+    view.add_top_bar(&header);
+    view.set_content(Some(
+        &gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .child(&clamp)
+            .build(),
+    ));
+
+    let dialog = adw::Dialog::builder()
+        .title(title)
+        .content_width(420)
+        .child(&view)
+        .build();
+    // Enter in a field submits, as it would in any form.
+    dialog.set_default_widget(Some(&submit));
+    cancel.connect_clicked({
+        let dialog = dialog.downgrade();
+        move |_| {
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
+            }
+        }
+    });
+    (dialog, submit)
+}
+
 /// Create a channel. Answers (display_name, url_name, purpose, private).
 pub fn create_channel(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     on_create: impl Fn(String, String, String, bool) + 'static,
 ) {
-    let name = adw::EntryRow::builder().title("Name").build();
+    let name = adw::EntryRow::builder()
+        .title("Name")
+        .activates_default(true)
+        .build();
     let url = adw::EntryRow::builder().title("URL name").build();
     let purpose = adw::EntryRow::builder().title("Purpose (optional)").build();
     let private = adw::SwitchRow::builder()
@@ -49,25 +138,20 @@ pub fn create_channel(
     group.add(&purpose);
     group.add(&private);
 
-    let dialog = adw::MessageDialog::new(Some(parent), Some("Create a channel"), None);
-    dialog.set_extra_child(Some(&group));
-    dialog.add_responses(&[("cancel", "Cancel"), ("create", "Create")]);
-    dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+    let (dialog, create) = form("New Channel", "Create", &group);
     // A channel with no name is the one mistake worth blocking outright.
-    dialog.set_response_enabled("create", false);
-    dialog.set_default_response(Some("create"));
-    dialog.set_close_response("cancel");
+    create.set_sensitive(false);
 
     // The URL follows the name until someone edits it themselves; from then on
     // it is theirs, and we notice by remembering what we last wrote there.
     let autofilled = Rc::new(RefCell::new(String::new()));
     name.connect_changed({
         let url = url.clone();
-        let dialog = dialog.clone();
+        let create = create.clone();
         let autofilled = autofilled.clone();
         move |name| {
             let text = name.text();
-            dialog.set_response_enabled("create", !text.trim().is_empty());
+            create.set_sensitive(!text.trim().is_empty());
             let ours = url.text().as_str() == autofilled.borrow().as_str();
             if ours {
                 let slug = slugify(text.trim());
@@ -77,30 +161,32 @@ pub fn create_channel(
         }
     });
 
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        if response != "create" {
-            return;
+    create.connect_clicked({
+        let dialog = dialog.clone();
+        let name = name.clone();
+        move |_| {
+            dialog.close();
+            let display_name = name.text().trim().to_string();
+            let mut url_name = url.text().trim().to_string();
+            // Emptied by hand, or a name with nothing ASCII in it to slug.
+            if url_name.is_empty() {
+                url_name = slugify(&display_name);
+            }
+            on_create(
+                display_name,
+                url_name,
+                purpose.text().trim().to_string(),
+                private.is_active(),
+            );
         }
-        let display_name = name.text().trim().to_string();
-        let mut url_name = url.text().trim().to_string();
-        // Emptied by hand, or a name with nothing ASCII in it to slug.
-        if url_name.is_empty() {
-            url_name = slugify(&display_name);
-        }
-        on_create(
-            display_name,
-            url_name,
-            purpose.text().trim().to_string(),
-            private.is_active(),
-        );
     });
-    dialog.present();
+    dialog.present(Some(parent));
+    name.grab_focus();
 }
 
 /// Browse and join channels.
 ///
-/// The window outlives this call, so the handle keeps the list around: the
+/// The dialog outlives this call, so the handle keeps the list around: the
 /// caller searches the server on [`Self::present`]'s `on_search` and pours the
 /// answer back in through [`Self::set_results`].
 pub struct ChannelBrowser {
@@ -114,7 +200,7 @@ pub struct ChannelBrowser {
 
 impl ChannelBrowser {
     pub fn present(
-        parent: &impl IsA<gtk::Window>,
+        parent: &impl IsA<gtk::Widget>,
         on_search: impl Fn(String) + 'static,
         on_join: impl Fn(String) + 'static,
     ) -> Self {
@@ -122,58 +208,21 @@ impl ChannelBrowser {
         // signal back until typing pauses, and the caller sees a whole term.
         let search = gtk::SearchEntry::builder()
             .placeholder_text("Search channels")
-            .width_request(280)
+            .hexpand(true)
             .build();
         let on_search = Rc::new(on_search);
         search.connect_search_changed({
             let on_search = on_search.clone();
             move |entry| on_search(entry.text().trim().to_string())
         });
+
+        let list = loading_list();
+        let dialog = list_dialog("Browse Channels", Some(search.upcast_ref()), &list);
+        dialog.present(Some(parent));
+        search.grab_focus();
         // Ask once on open: a browser that is empty until you type is a search
         // box, and browsing is the point.
         on_search(String::new());
-
-        let list = gtk::ListBox::builder()
-            .selection_mode(gtk::SelectionMode::None)
-            .valign(gtk::Align::Start)
-            .build();
-        list.add_css_class("boxed-list");
-        let empty = gtk::Label::builder()
-            .label("No channels found")
-            .margin_top(24)
-            .build();
-        empty.add_css_class("dim-label");
-        // GtkListBox shows this only while there are no rows, which covers both
-        // "nothing typed yet" and "nothing matched".
-        list.set_placeholder(Some(&empty));
-
-        let clamp = adw::Clamp::builder()
-            .maximum_size(560)
-            .margin_start(12)
-            .margin_end(12)
-            .margin_top(12)
-            .margin_bottom(12)
-            .child(&list)
-            .build();
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .child(&clamp)
-            .build();
-
-        let view = adw::ToolbarView::new();
-        view.add_top_bar(&adw::HeaderBar::builder().title_widget(&search).build());
-        view.set_content(Some(&scroller));
-
-        let window = adw::Window::builder()
-            .title("Browse channels")
-            .default_width(460)
-            .default_height(620)
-            .modal(true)
-            .build();
-        window.set_transient_for(Some(parent));
-        window.set_content(Some(&view));
-        window.present();
 
         ChannelBrowser {
             list,
@@ -186,9 +235,7 @@ impl ChannelBrowser {
         if self.search.text().trim() != term.trim() {
             return; // Answered a question nobody is asking any more.
         }
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
-        }
+        reset_list(&self.list, "system-search-symbolic", "No Channels Found");
 
         for (id, display_name, purpose, already_member) in channels {
             // AdwActionRow reads its title as Pango markup, and a channel name
@@ -200,41 +247,44 @@ impl ChannelBrowser {
                 row.set_subtitle(&glib::markup_escape_text(&purpose));
                 row.set_subtitle_lines(2);
             }
-
-            if already_member {
-                let joined = gtk::Label::new(Some("Joined"));
-                joined.add_css_class("dim-label");
-                row.add_suffix(&joined);
-            } else {
-                let button = gtk::Button::builder()
-                    .label("Join")
-                    .valign(gtk::Align::Center)
-                    .build();
-                button.add_css_class("suggested-action");
-                button.connect_clicked({
-                    let on_join = self.on_join.clone();
-                    // The window stays open so you can join several at once;
-                    // the button acknowledges the click itself, because the
-                    // caller's answer arrives over the network much later.
-                    move |button| {
-                        button.set_sensitive(false);
-                        button.set_label("Joined");
-                        on_join(id.clone());
-                    }
-                });
-                row.add_suffix(&button);
-            }
-
+            // The dialog stays open so you can join several at once; the
+            // button acknowledges the click itself, because the caller's
+            // answer arrives over the network much later.
+            row.add_suffix(&join_button(already_member, &id, &self.on_join));
             self.list.append(&row);
         }
     }
+}
+
+/// "Join", or a dim "Joined" where there is nothing left to do.
+fn join_button(already_member: bool, id: &str, on_join: &Rc<dyn Fn(String)>) -> gtk::Widget {
+    if already_member {
+        let joined = gtk::Label::new(Some("Joined"));
+        joined.add_css_class("dim-label");
+        return joined.upcast();
+    }
+    let button = gtk::Button::builder()
+        .label("Join")
+        .valign(gtk::Align::Center)
+        .build();
+    button.add_css_class("suggested-action");
+    button.connect_clicked({
+        let on_join = on_join.clone();
+        let id = id.to_string();
+        move |button| {
+            button.set_sensitive(false);
+            button.set_label("Joined");
+            on_join(id.clone());
+        }
+    });
+    button.upcast()
 }
 
 /// Per-channel notification settings. `current` is (desktop_level,
 /// mark_unread_all, ignore_channel_mentions) where desktop_level is one of
 /// "default"|"all"|"mention"|"none". Answers the same triple.
 pub fn channel_notifications(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     channel_name: &str,
     current: (String, bool, bool),
     on_save: impl Fn(String, bool, bool) + 'static,
@@ -252,117 +302,179 @@ pub fn channel_notifications(
         .active(ignore_channel_mentions)
         .build();
 
-    let group = adw::PreferencesGroup::new();
+    let group = adw::PreferencesGroup::builder()
+        .title(glib::markup_escape_text(channel_name))
+        .build();
     group.add(&desktop);
     group.add(&unread);
     group.add(&ignore);
 
-    let dialog = adw::MessageDialog::new(
-        Some(parent),
-        Some(&format!("Notifications for {channel_name}")),
-        None,
-    );
-    dialog.set_extra_child(Some(&group));
-    dialog.add_responses(&[("cancel", "Cancel"), ("save", "Save")]);
-    dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("save"));
-    dialog.set_close_response("cancel");
-
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        if response != "save" {
-            return;
+    let (dialog, save) = form("Notifications", "Save", &group);
+    save.connect_clicked({
+        let dialog = dialog.clone();
+        move |_| {
+            dialog.close();
+            on_save(
+                selected_level(&desktop, &CHANNEL_LEVELS),
+                unread.is_active(),
+                ignore.is_active(),
+            );
         }
-        on_save(
-            selected_level(&desktop, &CHANNEL_LEVELS),
-            unread.is_active(),
-            ignore.is_active(),
-        );
     });
-    dialog.present();
+    dialog.present(Some(parent));
 }
 
-/// Account-wide notification settings: desktop level, sound on/off, mention
-/// keywords (comma separated), and whether first name counts.
+/// Puts a row back the way it was after the server refused a change.
+pub type Revert = Box<dyn FnOnce()>;
+
+/// Account-wide notification settings for the preferences dialog: desktop
+/// level, sound on/off, mention keywords (comma separated), and whether first
+/// name counts. `current` is those four.
+///
+/// Each row applies on its own: `on_change` gets the `notify_props` key, its
+/// new value, and a [`Revert`] to call if saving it fails.
 pub fn account_notifications(
-    parent: &impl IsA<gtk::Window>,
     current: (String, bool, String, bool),
-    on_save: impl Fn(String, bool, String, bool) + 'static,
-) {
+    on_change: impl Fn(&'static str, String, Revert) + 'static,
+) -> adw::PreferencesGroup {
     let (level, sound, keywords, first_name) = current;
+    let on_change: Rc<dyn Fn(&'static str, String, Revert)> = Rc::new(on_change);
+    // Set while a refused change is being put back, so that undoing it is not
+    // itself sent to the server as a change.
+    let reverting = Rc::new(Cell::new(false));
 
     let desktop = level_row("Desktop notifications", &ACCOUNT_LEVELS, &level);
+    let shown = Rc::new(Cell::new(desktop.selected()));
+    desktop.connect_selected_notify({
+        let on_change = on_change.clone();
+        let reverting = reverting.clone();
+        move |row| {
+            if reverting.get() {
+                return;
+            }
+            let old = shown.replace(row.selected());
+            let revert: Revert = Box::new({
+                let row = row.clone();
+                let reverting = reverting.clone();
+                let shown = shown.clone();
+                move || {
+                    reverting.set(true);
+                    shown.set(old);
+                    row.set_selected(old);
+                    reverting.set(false);
+                }
+            });
+            on_change("desktop", selected_level(row, &ACCOUNT_LEVELS), revert);
+        }
+    });
+
     let sound_row = adw::SwitchRow::builder()
         .title("Notification sound")
         .active(sound)
-        .build();
-    let keywords_row = adw::EntryRow::builder()
-        .title("Keywords that mention me")
-        .text(keywords)
         .build();
     let first_name_row = adw::SwitchRow::builder()
         .title("My first name")
         .subtitle("Notify me when someone types it")
         .active(first_name)
         .build();
+    for (row, key) in [
+        (&sound_row, "desktop_sound"),
+        (&first_name_row, "first_name"),
+    ] {
+        row.connect_active_notify({
+            let on_change = on_change.clone();
+            let reverting = reverting.clone();
+            move |row| {
+                if reverting.get() {
+                    return;
+                }
+                let old = !row.is_active();
+                let revert: Revert = Box::new({
+                    let row = row.clone();
+                    let reverting = reverting.clone();
+                    move || {
+                        reverting.set(true);
+                        row.set_active(old);
+                        reverting.set(false);
+                    }
+                });
+                on_change(key, row.is_active().to_string(), revert);
+            }
+        });
+    }
+
+    // Typing is not deciding, so the keywords wait for the row's own apply
+    // button (or Enter) rather than saving per keystroke.
+    let keywords_row = adw::EntryRow::builder()
+        .title("Keywords that mention me")
+        .text(&keywords)
+        .show_apply_button(true)
+        .build();
+    let saved = Rc::new(RefCell::new(keywords));
+    keywords_row.connect_apply({
+        let on_change = on_change.clone();
+        move |row| {
+            let value = row.text().trim().to_string();
+            let old = saved.replace(value.clone());
+            let revert: Revert = Box::new({
+                let row = row.clone();
+                let saved = saved.clone();
+                move || {
+                    row.set_text(&old);
+                    *saved.borrow_mut() = old;
+                }
+            });
+            on_change("mention_keys", value, revert);
+        }
+    });
 
     let group = adw::PreferencesGroup::builder()
-        .description("Keywords are separated by commas and ignore case.")
+        .title("Notifications")
+        .description("Saved to your account on the server. Keywords are separated by commas and ignore case.")
         .build();
     group.add(&desktop);
     group.add(&sound_row);
     group.add(&keywords_row);
     group.add(&first_name_row);
-
-    let dialog = adw::MessageDialog::new(Some(parent), Some("Notifications"), None);
-    dialog.set_extra_child(Some(&group));
-    dialog.add_responses(&[("cancel", "Cancel"), ("save", "Save")]);
-    dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("save"));
-    dialog.set_close_response("cancel");
-
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        if response != "save" {
-            return;
-        }
-        on_save(
-            selected_level(&desktop, &ACCOUNT_LEVELS),
-            sound_row.is_active(),
-            keywords_row.text().trim().to_string(),
-            first_name_row.is_active(),
-        );
-    });
-    dialog.present();
+    group
 }
 
 /// Confirm leaving a channel.
 pub fn confirm_leave(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     channel_name: &str,
     on_leave: impl Fn() + 'static,
 ) {
-    let dialog = adw::MessageDialog::new(
-        Some(parent),
-        Some(&format!("Leave {channel_name}?")),
-        Some("You will stop receiving its messages. You can join a public channel again later."),
+    confirm(
+        parent,
+        &format!("Leave {channel_name}?"),
+        "Its messages will stop arriving until you join again.",
+        "Leave",
+        on_leave,
     );
-    dialog.add_responses(&[("cancel", "Cancel"), ("leave", "Leave")]);
-    dialog.set_response_appearance("leave", adw::ResponseAppearance::Destructive);
-    dialog.set_default_response(Some("cancel"));
-    dialog.set_close_response("cancel");
+}
 
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        if response == "leave" {
-            on_leave();
-        }
-    });
-    dialog.present();
+/// Confirm leaving a team, which takes every channel in it along.
+pub fn confirm_leave_team(
+    parent: &impl IsA<gtk::Widget>,
+    team_name: &str,
+    on_leave: impl Fn() + 'static,
+) {
+    confirm(
+        parent,
+        &format!("Leave {team_name}?"),
+        "All of its channels will disappear until someone adds you back.",
+        "Leave",
+        on_leave,
+    );
 }
 
 /// Schedule a message: answers a Unix millisecond timestamp.
-pub fn schedule_message(parent: &impl IsA<gtk::Window>, on_schedule: impl Fn(i64) + 'static) {
+pub fn schedule_message(parent: &impl IsA<gtk::Widget>, on_schedule: impl Fn(i64) + 'static) {
+    let on_schedule = Rc::new(on_schedule);
+
+    // The usual times are one tap each; the calendar below is for the rest.
+    let presets = adw::PreferencesGroup::new();
     let calendar = gtk::Calendar::new();
 
     let hour = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
@@ -372,6 +484,8 @@ pub fn schedule_message(parent: &impl IsA<gtk::Window>, on_schedule: impl Fn(i64
     // Wrapping so 23 rolls to 00 rather than stopping dead at the end.
     hour.set_wrap(true);
     minute.set_wrap(true);
+    hour.update_property(&[gtk::accessible::Property::Label("Hour")]);
+    minute.update_property(&[gtk::accessible::Property::Label("Minute")]);
 
     let time = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -383,34 +497,49 @@ pub fn schedule_message(parent: &impl IsA<gtk::Window>, on_schedule: impl Fn(i64
     time.append(&gtk::Label::new(Some(":")));
     time.append(&minute);
 
+    let custom = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .margin_top(18)
+        .build();
+    custom.append(&calendar);
+    custom.append(&time);
+
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .build();
-    content.append(&calendar);
-    content.append(&time);
+    content.append(&presets);
+    content.append(&custom);
 
-    let dialog = adw::MessageDialog::new(
-        Some(parent),
-        Some("Schedule message"),
-        Some("Pick one of the usual times, or a date and time below."),
-    );
-    dialog.set_extra_child(Some(&content));
-    dialog.add_responses(&[
-        ("cancel", "Cancel"),
-        ("tomorrow", "Tomorrow morning"),
-        ("monday", "Monday morning"),
-        ("custom", "Schedule"),
-    ]);
-    dialog.set_response_appearance("custom", adw::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("custom"));
-    dialog.set_close_response("cancel");
+    let (dialog, schedule) = form("Schedule Message", "Schedule", &content);
 
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        let millis = match response {
-            "tomorrow" => morning_in(1),
-            "monday" => next_monday_morning(),
-            "custom" => glib::DateTime::from_local(
+    for (label, when) in [
+        ("Tomorrow Morning", morning_in as fn(i32) -> Option<i64>),
+        ("Monday Morning", |_| next_monday_morning()),
+    ] {
+        let row = adw::ActionRow::builder()
+            .title(label)
+            .subtitle("9:00")
+            .activatable(true)
+            .build();
+        row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        row.connect_activated({
+            let dialog = dialog.clone();
+            let on_schedule = on_schedule.clone();
+            move |_| {
+                dialog.close();
+                if let Some(millis) = when(1) {
+                    on_schedule(millis);
+                }
+            }
+        });
+        presets.add(&row);
+    }
+
+    schedule.connect_clicked({
+        let dialog = dialog.clone();
+        move |_| {
+            dialog.close();
+            let millis = glib::DateTime::from_local(
                 calendar.year(),
                 // GtkCalendar counts months from zero, GDateTime from one.
                 calendar.month() + 1,
@@ -420,35 +549,32 @@ pub fn schedule_message(parent: &impl IsA<gtk::Window>, on_schedule: impl Fn(i64
                 0.0,
             )
             .ok()
-            .map(unix_millis),
-            _ => None,
-        };
-        if let Some(millis) = millis {
-            on_schedule(millis);
+            .map(unix_millis);
+            if let Some(millis) = millis {
+                on_schedule(millis);
+            }
         }
     });
-    dialog.present();
+    dialog.present(Some(parent));
 }
 
 /// Set a reminder about a post: answers a Unix millisecond timestamp.
-pub fn post_reminder(parent: &impl IsA<gtk::Window>, on_remind: impl Fn(i64) + 'static) {
-    let dialog = adw::MessageDialog::new(
-        Some(parent),
-        Some("Remind me about this"),
+pub fn post_reminder(parent: &impl IsA<gtk::Widget>, on_remind: impl Fn(i64) + 'static) {
+    let dialog = adw::AlertDialog::new(
+        Some("Set a Reminder"),
         Some("The system bot will send you the message again."),
     );
     dialog.add_responses(&[
         ("cancel", "Cancel"),
-        ("30m", "In 30 minutes"),
-        ("1h", "In 1 hour"),
-        ("2h", "In 2 hours"),
-        ("tomorrow", "Tomorrow morning"),
+        ("30m", "In 30 Minutes"),
+        ("1h", "In 1 Hour"),
+        ("2h", "In 2 Hours"),
+        ("tomorrow", "Tomorrow Morning"),
     ]);
     dialog.set_default_response(Some("tomorrow"));
     dialog.set_close_response("cancel");
 
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
+    dialog.connect_response(None, move |_, response| {
         let millis = match response {
             "30m" => from_now(|now| now.add_minutes(30)),
             "1h" => from_now(|now| now.add_hours(1)),
@@ -460,7 +586,7 @@ pub fn post_reminder(parent: &impl IsA<gtk::Window>, on_remind: impl Fn(i64) + '
             on_remind(millis);
         }
     });
-    dialog.present();
+    dialog.present(Some(parent));
 }
 
 /// A combo row over one of the level tables, showing the labels and answering
@@ -535,7 +661,7 @@ fn slugify(name: &str) -> String {
 
 /// Who is in a channel, with a search for adding more.
 ///
-/// Like [`ChannelBrowser`] the window outlives this call: the caller answers
+/// Like [`ChannelBrowser`] the dialog outlives this call: the caller answers
 /// `on_search` through [`Self::set_candidates`], and refills the roster with
 /// [`Self::set_members`] once the server has confirmed an add or a removal.
 pub struct MemberList {
@@ -549,13 +675,13 @@ pub struct MemberList {
 
 impl MemberList {
     pub fn present(
-        parent: &impl IsA<gtk::Window>,
+        parent: &impl IsA<gtk::Widget>,
         channel_name: &str,
         on_search: impl Fn(String) + 'static,
         on_add: impl Fn(String) + 'static,
         on_remove: impl Fn(String) + 'static,
     ) -> Self {
-        let members = empty_list("system-users-symbolic", "Nobody here yet");
+        let members = loading_list();
         let members_group = adw::PreferencesGroup::builder().title("Members").build();
         members_group.add(&members);
 
@@ -571,8 +697,8 @@ impl MemberList {
         // add are usually the ones the server would have listed anyway.
         on_search(String::new());
 
-        let candidates = empty_list("system-search-symbolic", "No matching people");
-        let add_group = adw::PreferencesGroup::builder().title("Add people").build();
+        let candidates = loading_list();
+        let add_group = adw::PreferencesGroup::builder().title("Add People").build();
         add_group.add(&search);
         add_group.add(&candidates);
 
@@ -583,7 +709,8 @@ impl MemberList {
         content.append(&members_group);
         content.append(&add_group);
 
-        list_window(parent, &format!("Members of {channel_name}"), &content).present();
+        let title = adw::WindowTitle::new("Members", channel_name);
+        list_dialog("Members", Some(title.upcast_ref()), &content).present(Some(parent));
 
         MemberList {
             members,
@@ -596,7 +723,7 @@ impl MemberList {
 
     /// `members` is (user_id, display_name, @username, is_admin).
     pub fn set_members(&self, members: Vec<(String, String, String, bool)>) {
-        clear_list(&self.members);
+        reset_list(&self.members, "system-users-symbolic", "No Members");
 
         for (id, display_name, username, is_admin) in members {
             let row = adw::ActionRow::builder()
@@ -614,7 +741,7 @@ impl MemberList {
             } else {
                 let button = gtk::Button::builder()
                     .icon_name("list-remove-symbolic")
-                    .tooltip_text("Remove from channel")
+                    .tooltip_text("Remove From Channel")
                     .valign(gtk::Align::Center)
                     .build();
                 button.add_css_class("flat");
@@ -639,7 +766,11 @@ impl MemberList {
         if self.search.text().trim() != term.trim() {
             return; // Answered a question nobody is asking any more.
         }
-        clear_list(&self.candidates);
+        reset_list(
+            &self.candidates,
+            "system-search-symbolic",
+            "No Matching People",
+        );
 
         for (id, display_name, username) in users {
             let row = adw::ActionRow::builder()
@@ -677,9 +808,9 @@ pub struct TeamBrowser {
 }
 
 impl TeamBrowser {
-    pub fn present(parent: &impl IsA<gtk::Window>, on_join: impl Fn(String) + 'static) -> Self {
-        let list = empty_list("network-workgroup-symbolic", "No teams to join");
-        list_window(parent, "Browse teams", &list).present();
+    pub fn present(parent: &impl IsA<gtk::Widget>, on_join: impl Fn(String) + 'static) -> Self {
+        let list = loading_list();
+        list_dialog("Browse Teams", None, &list).present(Some(parent));
 
         TeamBrowser {
             list,
@@ -689,7 +820,7 @@ impl TeamBrowser {
 
     /// `teams` is (id, display_name, description, already_member).
     pub fn set_teams(&self, teams: Vec<(String, String, String, bool)>) {
-        clear_list(&self.list);
+        reset_list(&self.list, "network-workgroup-symbolic", "No Teams to Join");
 
         for (id, display_name, description, already_member) in teams {
             let row = adw::ActionRow::builder()
@@ -699,28 +830,7 @@ impl TeamBrowser {
                 row.set_subtitle(&glib::markup_escape_text(&description));
                 row.set_subtitle_lines(2);
             }
-
-            if already_member {
-                let joined = gtk::Label::new(Some("Joined"));
-                joined.add_css_class("dim-label");
-                row.add_suffix(&joined);
-            } else {
-                let button = gtk::Button::builder()
-                    .label("Join")
-                    .valign(gtk::Align::Center)
-                    .build();
-                button.add_css_class("suggested-action");
-                button.connect_clicked({
-                    let on_join = self.on_join.clone();
-                    move |button| {
-                        button.set_sensitive(false);
-                        button.set_label("Joined");
-                        on_join(id.clone());
-                    }
-                });
-                row.add_suffix(&button);
-            }
-
+            row.add_suffix(&join_button(already_member, &id, &self.on_join));
             self.list.append(&row);
         }
     }
@@ -728,7 +838,7 @@ impl TeamBrowser {
 
 /// A channel's bookmarks, filled in by [`Self::set_bookmarks`].
 ///
-/// Adding one is a form in the same window rather than a second dialog: it is
+/// Adding one is a form in the same dialog rather than a second dialog: it is
 /// two fields, and you usually add several in a row.
 pub struct BookmarkList {
     list: gtk::ListBox,
@@ -738,12 +848,12 @@ pub struct BookmarkList {
 
 impl BookmarkList {
     pub fn present(
-        parent: &impl IsA<gtk::Window>,
+        parent: &impl IsA<gtk::Widget>,
         on_add: impl Fn(String, String) + 'static,
         on_open: impl Fn(String) + 'static,
         on_delete: impl Fn(String) + 'static,
     ) -> Self {
-        let list = empty_list("bookmark-new-symbolic", "No bookmarks yet");
+        let list = loading_list();
         let list_group = adw::PreferencesGroup::builder().title("Bookmarks").build();
         list_group.add(&list);
 
@@ -778,7 +888,7 @@ impl BookmarkList {
         });
 
         let form = adw::PreferencesGroup::builder()
-            .title("Add a bookmark")
+            .title("Add Bookmark")
             .build();
         form.set_header_suffix(Some(&add));
         form.add(&name);
@@ -791,7 +901,7 @@ impl BookmarkList {
         content.append(&list_group);
         content.append(&form);
 
-        list_window(parent, "Bookmarks", &content).present();
+        list_dialog("Bookmarks", None, &content).present(Some(parent));
 
         BookmarkList {
             list,
@@ -802,7 +912,7 @@ impl BookmarkList {
 
     /// `bookmarks` is (id, display_name, link_url).
     pub fn set_bookmarks(&self, bookmarks: Vec<(String, String, String)>) {
-        clear_list(&self.list);
+        reset_list(&self.list, "bookmark-new-symbolic", "No Bookmarks");
 
         for (id, display_name, link_url) in bookmarks {
             let row = adw::ActionRow::builder()
@@ -820,7 +930,7 @@ impl BookmarkList {
 
             let delete = gtk::Button::builder()
                 .icon_name("user-trash-symbolic")
-                .tooltip_text("Remove bookmark")
+                .tooltip_text("Remove Bookmark")
                 .valign(gtk::Align::Center)
                 .build();
             delete.add_css_class("flat");
@@ -840,147 +950,157 @@ impl BookmarkList {
 
 /// Rename a channel, or change its topic. Answers (display_name, header).
 pub fn edit_channel(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     current: (String, String),
     on_save: impl Fn(String, String) + 'static,
 ) {
-    let name = adw::EntryRow::builder().title("Name").build();
-    name.set_text(&current.0);
-    let header = adw::EntryRow::builder().title("Topic").build();
-    header.set_text(&current.1);
+    let name = adw::EntryRow::builder()
+        .title("Name")
+        .text(&current.0)
+        .activates_default(true)
+        .build();
+    let header = adw::EntryRow::builder()
+        .title("Topic")
+        .text(&current.1)
+        .activates_default(true)
+        .build();
 
     let group = adw::PreferencesGroup::builder().build();
     group.add(&name);
     group.add(&header);
 
-    let dialog = adw::MessageDialog::new(Some(parent.as_ref()), Some("Channel details"), None);
-    dialog.set_extra_child(Some(&group));
-    dialog.add_responses(&[("cancel", "Cancel"), ("save", "Save")]);
-    dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("save"));
-    dialog.set_close_response("cancel");
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        if response == "save" {
+    let (dialog, save) = form("Channel Details", "Save", &group);
+    save.set_sensitive(!current.0.trim().is_empty());
+    name.connect_changed({
+        let save = save.clone();
+        move |name| save.set_sensitive(!name.text().trim().is_empty())
+    });
+    save.connect_clicked({
+        let dialog = dialog.clone();
+        let name = name.clone();
+        move |_| {
+            dialog.close();
             on_save(name.text().trim().to_string(), header.text().to_string());
         }
     });
-    dialog.present();
+    dialog.present(Some(parent));
+    name.grab_focus();
 }
 
 /// Confirm archiving a channel. Archiving hides it for everyone, so it asks
 /// in the same words the other clients use.
 pub fn confirm_archive(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     channel_name: &str,
     on_archive: impl Fn() + 'static,
 ) {
-    let dialog = adw::MessageDialog::new(
-        Some(parent.as_ref()),
-        Some("Archive this channel?"),
-        Some(&format!(
-            "{channel_name} will be hidden for everyone. Its messages are kept, and an admin can \
-             bring it back."
-        )),
+    confirm(
+        parent,
+        &format!("Archive {channel_name}?"),
+        "It will be hidden for everyone; its messages are kept and an admin can bring it back.",
+        "Archive",
+        on_archive,
     );
-    dialog.add_responses(&[("cancel", "Cancel"), ("archive", "Archive")]);
-    dialog.set_response_appearance("archive", adw::ResponseAppearance::Destructive);
-    dialog.set_default_response(Some("cancel"));
-    dialog.set_close_response("cancel");
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        if response == "archive" {
-            on_archive();
-        }
-    });
-    dialog.present();
 }
 
-/// Name a category, whether new or being renamed.
+/// Name a category, whether new or being renamed. One field, so it stays a
+/// small alert rather than a whole form.
 pub fn name_category(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     heading: &str,
     current: &str,
     on_save: impl Fn(String) + 'static,
 ) {
-    let entry = adw::EntryRow::builder().title("Name").build();
-    entry.set_text(current);
+    let entry = adw::EntryRow::builder()
+        .title("Name")
+        .text(current)
+        .activates_default(true)
+        .build();
     let group = adw::PreferencesGroup::builder().build();
     group.add(&entry);
 
-    let dialog = adw::MessageDialog::new(Some(parent.as_ref()), Some(heading), None);
+    let dialog = adw::AlertDialog::new(Some(heading), None);
     dialog.set_extra_child(Some(&group));
     dialog.add_responses(&[("cancel", "Cancel"), ("save", "Save")]);
     dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("save"));
     dialog.set_close_response("cancel");
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        let name = entry.text().trim().to_string();
-        if response == "save" && !name.is_empty() {
-            on_save(name);
+    dialog.set_response_enabled("save", !current.trim().is_empty());
+    entry.connect_changed({
+        let dialog = dialog.clone();
+        move |entry| dialog.set_response_enabled("save", !entry.text().trim().is_empty())
+    });
+    dialog.connect_response(None, {
+        let entry = entry.clone();
+        move |_, response| {
+            let name = entry.text().trim().to_string();
+            if response == "save" && !name.is_empty() {
+                on_save(name);
+            }
         }
     });
-    dialog.present();
+    dialog.present(Some(parent));
+    entry.grab_focus();
 }
 
 /// Confirm removing someone from a channel.
 pub fn confirm_remove_member(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     name: &str,
     on_remove: impl Fn() + 'static,
 ) {
-    let dialog = adw::MessageDialog::new(
-        Some(parent),
-        Some(&format!("Remove {name}?")),
-        Some("They will stop receiving its messages. You can add them back later."),
+    confirm(
+        parent,
+        &format!("Remove {name}?"),
+        "They will stop receiving its messages until someone adds them back.",
+        "Remove",
+        on_remove,
     );
-    dialog.add_responses(&[("cancel", "Cancel"), ("remove", "Remove")]);
-    dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
-    dialog.set_default_response(Some("cancel"));
-    dialog.set_close_response("cancel");
-
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        if response == "remove" {
-            on_remove();
-        }
-    });
-    dialog.present();
 }
 
-/// A boxed list that says why it is empty instead of leaving a blank gap.
-/// GtkListBox shows the placeholder only while there are no rows, which covers
-/// both "nothing loaded yet" and "nothing matched".
-fn empty_list(icon: &str, title: &str) -> gtk::ListBox {
+/// A boxed list that shows a spinner until its first answer arrives; from then
+/// on [`reset_list`] has it say why it is empty instead of leaving a gap.
+pub fn loading_list() -> gtk::ListBox {
     let list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .valign(gtk::Align::Start)
         .build();
     list.add_css_class("boxed-list");
 
+    let spinner = gtk::Spinner::builder()
+        .spinning(true)
+        .width_request(32)
+        .height_request(32)
+        .halign(gtk::Align::Center)
+        .margin_top(24)
+        .margin_bottom(24)
+        .build();
+    list.set_placeholder(Some(&spinner));
+    list
+}
+
+/// Empties `list` for a fresh answer, and has it say `title` if the answer
+/// turns out to be nothing. GtkListBox shows the placeholder only while there
+/// are no rows.
+pub fn reset_list(list: &gtk::ListBox, icon: &str, title: &str) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
     let empty = adw::StatusPage::builder()
         .icon_name(icon)
         .title(title)
         .build();
     empty.add_css_class("compact");
     list.set_placeholder(Some(&empty));
-    list
 }
 
-fn clear_list(list: &gtk::ListBox) {
-    while let Some(child) = list.first_child() {
-        list.remove(&child);
-    }
-}
-
-/// The window the lists above live in: a plain header and a scrolling clamp,
-/// same shape as [`ChannelBrowser`] minus the search box in the title.
-fn list_window(
-    parent: &impl IsA<gtk::Window>,
+/// The dialog a list lives in: a header (with `title_widget` in the middle
+/// when given) over a scrolling clamp. On a phone it is a bottom sheet.
+pub fn list_dialog(
     title: &str,
+    title_widget: Option<&gtk::Widget>,
     content: &impl IsA<gtk::Widget>,
-) -> adw::Window {
+) -> adw::Dialog {
     let clamp = adw::Clamp::builder()
         .maximum_size(560)
         .margin_start(12)
@@ -995,19 +1115,20 @@ fn list_window(
         .child(&clamp)
         .build();
 
+    let header = adw::HeaderBar::new();
+    if let Some(widget) = title_widget {
+        header.set_title_widget(Some(widget));
+    }
     let view = adw::ToolbarView::new();
-    view.add_top_bar(&adw::HeaderBar::new());
+    view.add_top_bar(&header);
     view.set_content(Some(&scroller));
 
-    let window = adw::Window::builder()
+    adw::Dialog::builder()
         .title(title)
-        .default_width(460)
-        .default_height(620)
-        .modal(true)
-        .build();
-    window.set_transient_for(Some(parent));
-    window.set_content(Some(&view));
-    window
+        .content_width(460)
+        .content_height(620)
+        .child(&view)
+        .build()
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
-//! Storage preferences for the bounded HTTP/media cache.
+//! Storage preferences for the bounded HTTP/media cache: one group of the
+//! preferences dialog.
 
 use adw::prelude::*;
 
@@ -6,7 +7,7 @@ use crate::resource_cache::ResourceCache;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
-pub fn show(parent: &adw::ApplicationWindow, cache: ResourceCache) {
+pub fn group(cache: ResourceCache) -> adw::PreferencesGroup {
     let limit = adw::SpinRow::with_range(0.0, 50.0, 0.25);
     limit.set_title("Media cache limit");
     limit.set_subtitle("Avatars, previews and opened attachments; 0 disables caching");
@@ -58,23 +59,12 @@ pub fn show(parent: &adw::ApplicationWindow, cache: ResourceCache) {
     });
 
     let group = adw::PreferencesGroup::builder()
-        .title("Downloaded media")
+        .title("Storage")
         .description("The limit is shared by all accounts; cached files expire automatically.")
         .build();
     group.add(&limit);
     group.add(&usage);
-
-    let page = adw::PreferencesPage::new();
-    page.add(&group);
-    let window = adw::PreferencesWindow::builder()
-        .title("Storage")
-        .transient_for(parent)
-        .modal(true)
-        .default_width(520)
-        .default_height(320)
-        .build();
-    window.add(&page);
-    window.present();
+    group
 }
 
 fn human_bytes(bytes: u64) -> String {
