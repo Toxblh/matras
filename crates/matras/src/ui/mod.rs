@@ -1557,13 +1557,7 @@ impl Ui {
     /// Redraws only the message surfaces — used when something cosmetic lands,
     /// such as an avatar finishing its download.
     fn refresh_messages(self: &Rc<Self>) {
-        let inbox_count = {
-            let state = self.state.borrow();
-            state
-                .mentions
-                .len()
-                .max(state.unread_threads().max(0) as usize) as i64
-        };
+        let inbox_count = self.state.borrow().inbox_badge_count();
         self.channels.set_inbox_count(inbox_count);
         let actions = self.message_actions();
         self.chat.refresh(&self.state, &self.avatars, &actions);
@@ -7348,15 +7342,11 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
             .scroll_anchors
             .clone_from(&pointer.scroll_anchors);
     }
-    // The channel to open is the one that *was* open. Without this the startup
-    // sequence picks a channel for a first-ever visit — town-square, or the
-    // first one alphabetically — and the restore below then finds the seat
-    // taken and gives up, so the snapshot was read, fetched from, and ignored.
-    // `Bootstrap` re-validates both against current membership and falls back
-    // on its own, so a team or channel we have since left still lands
-    // somewhere sensible.
+    // Only the team comes back from last time. Launch lands on the empty page
+    // rather than reopening the last channel (issue #7), so the channel the
+    // snapshot remembers is not handed to `Bootstrap` and no cached posts are
+    // read for it.
     let preferred_team = pointer.as_ref().and_then(|p| p.current_team.clone());
-    let preferred_channel = pointer.as_ref().and_then(|p| p.current_channel.clone());
 
     // Draw last time's picture first. Everything here is replaced the moment
     // the real data lands; it is on screen so that launching the app shows
@@ -7397,66 +7387,13 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                     }
                 }
                 ui.refresh_all();
-
-                // And the messages for wherever we were, so the conversation
-                // is there too rather than just the list around it.
-                if let Some(channel_id) = pointer
-                    .as_ref()
-                    .and_then(|p| p.current_channel.clone())
-                    .filter(|id| ui.state.borrow().current_channel.as_deref() != Some(id.as_str()))
-                {
-                    let anchor = pointer
-                        .as_ref()
-                        .and_then(|p| p.scroll_anchors.get(&channel_id).cloned());
-                    let ui = ui.clone();
-                    runtime::spawn(
-                        async move {
-                            let posts = if let Some(post_id) = anchor.as_deref() {
-                                let around = store.posts_around(&channel_id, post_id, 10, 10).await;
-                                match around {
-                                    Ok(posts) if !posts.is_empty() => Ok(posts),
-                                    Ok(_) => store.posts(&channel_id, INITIAL_POSTS as usize).await,
-                                    Err(error) => Err(error),
-                                }
-                            } else {
-                                store.posts(&channel_id, INITIAL_POSTS as usize).await
-                            };
-                            (channel_id, anchor, posts)
-                        },
-                        move |(channel_id, anchor, posts)| {
-                            let Ok(posts) = posts else { return };
-                            if posts.is_empty() {
-                                return;
-                            }
-                            {
-                                let mut st = ui.state.borrow_mut();
-                                st.feeds
-                                    .entry(channel_id.clone())
-                                    .or_insert_with(|| ChannelFeed::from_posts(posts));
-                                let current = st.current_channel.take();
-                                st.current_channel =
-                                    shortcuts::startup_channel(current, Some(channel_id));
-                            }
-                            ui.refresh_messages();
-                            if let Some(anchor) = anchor {
-                                ui.chat.restore_anchor(&anchor);
-                            }
-                        },
-                    );
-                }
             },
         );
     }
 
     runtime::spawn(
         async move {
-            let boot = Bootstrap::run(
-                &client,
-                preferred_team.as_deref(),
-                preferred_channel.as_deref(),
-                0,
-            )
-            .await?;
+            let boot = Bootstrap::run(&client, preferred_team.as_deref(), None, 0).await?;
             // Calls discovery is optional: the plugin may not be installed.
             let calls = mattermost_calls::discover(&client)
                 .await

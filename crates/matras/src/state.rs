@@ -397,6 +397,16 @@ impl AppState {
         self.thread_inbox.iter().filter(|t| t.is_unread()).count() as i64
     }
 
+    /// The number both inbox buttons show, so the sidebar and the chat header
+    /// cannot disagree about it.
+    pub fn inbox_badge_count(&self) -> i64 {
+        self.mentions
+            .len()
+            .min(99)
+            .max(self.unread_threads().max(0) as usize) as i64
+            + self.reaction_unread
+    }
+
     /// Applies a post to whichever feeds hold it: the channel, the thread, or
     /// both.
     ///
@@ -624,6 +634,14 @@ mod tests {
         st.feeds
             .insert("chan".into(), ChannelFeed::from_posts(vec![root]));
         st
+    }
+
+    #[test]
+    fn inbox_badge_counts_reactions_on_top_of_mentions() {
+        let mut st = state_with_root(0);
+        st.mentions = vec![post("m1", 1), post("m2", 2)];
+        st.reaction_unread = 3;
+        assert_eq!(st.inbox_badge_count(), 5);
     }
 
     fn reply(id: &str, at: Millis, user_id: &str) -> Post {
