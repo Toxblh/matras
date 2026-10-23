@@ -88,8 +88,22 @@ pub fn present(
                 getters.push((name, getter));
             }
             kind => {
-                let group = group.get_or_insert_with(|| {
+                // AdwEntryRow has neither a subtitle nor a placeholder, so a
+                // text field with a hint gets a group of its own and the hint
+                // goes in the group description, where it stays visible.
+                let hint = match kind {
+                    "select" if !element.options.is_empty() => String::new(),
+                    "bool" => String::new(),
+                    _ => entry_hint(element),
+                };
+                if !hint.is_empty() {
+                    group = None;
+                }
+                let current = group.get_or_insert_with(|| {
                     let group = adw::PreferencesGroup::new();
+                    if !hint.is_empty() {
+                        group.set_description(Some(&escaped(&hint)));
+                    }
                     content.append(&group);
                     group
                 });
@@ -102,7 +116,12 @@ pub fn present(
                     // better than a form with a hole in it.
                     _ => entry_row(element, &revalidate),
                 };
-                group.add(&row);
+                current.add(&row);
+                // The hint describes this field alone, so the next row
+                // starts a group of its own.
+                if !hint.is_empty() {
+                    group = None;
+                }
                 getters.push((name, getter));
                 if let Some(check) = check {
                     checks.borrow_mut().push(check);
@@ -186,13 +205,6 @@ fn entry_row(
         row.upcast()
     };
     let editable = row.clone().downcast::<gtk::Editable>().expect("entry row");
-    if !element.placeholder.is_empty() {
-        row.set_property("placeholder-text", &element.placeholder);
-    }
-    if !element.help_text.is_empty() {
-        // AdwEntryRow has no subtitle — only the AdwActionRow family does.
-        row.set_tooltip_text(Some(&element.help_text));
-    }
 
     let length = {
         let editable = editable.clone();
@@ -206,6 +218,16 @@ fn entry_row(
 
     let getter: Getter = Box::new(move || Value::String(editable.text().to_string()));
     (row, getter, Some(check))
+}
+
+/// What a text field shows above itself: its help text and its placeholder.
+fn entry_hint(element: &DialogElement) -> String {
+    [&element.help_text, &element.placeholder]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A multi-line field. `GtkTextView` is not a row, so it gets its own group

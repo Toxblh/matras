@@ -82,9 +82,9 @@ pub struct RightPanel {
     search_list: gtk::Box,
 
     inbox_stack: gtk::Stack,
-    saved_list: gtk::Box,
-    mentions_list: gtk::Box,
-    threads_list: gtk::Box,
+    saved_list: gtk::ListBox,
+    mentions_list: gtk::ListBox,
+    threads_list: gtk::ListBox,
 
     on_open_thread: Rc<dyn Fn(String)>,
     /// (channel id, root post id — empty when the target is a root post)
@@ -124,7 +124,7 @@ impl RightPanel {
 
         let close = gtk::Button::builder()
             .icon_name("window-close-symbolic")
-            .tooltip_text("Close panel")
+            .tooltip_text("Close Panel")
             .build();
         close.add_css_class("flat");
         close.connect_clicked(move |_| on_close());
@@ -136,8 +136,8 @@ impl RightPanel {
         // Following a thread is how you keep getting told about it after you
         // stop being mentioned in it, so it belongs on the thread itself.
         let follow = gtk::ToggleButton::builder()
-            .icon_name("bookmark-new-symbolic")
-            .tooltip_text("Follow this thread")
+            .icon_name("preferences-system-notifications-symbolic")
+            .tooltip_text(follow_tooltip(false))
             .visible(false)
             .build();
         follow.add_css_class("flat");
@@ -145,6 +145,7 @@ impl RightPanel {
         follow.connect_toggled({
             let updating = updating_follow.clone();
             move |button| {
+                button.set_tooltip_text(Some(follow_tooltip(button.is_active())));
                 if !*updating.borrow() {
                     on_follow(button.is_active());
                 }
@@ -230,6 +231,7 @@ impl RightPanel {
             .left_margin(8)
             .right_margin(8)
             .build();
+        thread_entry.update_property(&[gtk::accessible::Property::Label("Reply")]);
         let entry_frame = gtk::Frame::builder()
             .hexpand(true)
             .child(&thread_entry)
@@ -503,16 +505,16 @@ impl RightPanel {
                 .halign(gtk::Align::Center)
                 .margin_top(24)
                 .build();
-            spinner.start();
+            chat::start_spinner_later(&spinner, || true);
             self.search_list.append(&spinner);
             return;
         }
         if st.search_results.is_empty() {
             self.search_list.append(
                 &adw::StatusPage::builder()
-                    .icon_name("system-search-symbolic")
-                    .title("No matches")
-                    .description("Nothing here matched that search.")
+                    .icon_name("edit-find-symbolic")
+                    .title("No Results Found")
+                    .description("Try a different search")
                     .css_classes(["compact"])
                     .build(),
             );
@@ -548,7 +550,7 @@ impl RightPanel {
                 .halign(gtk::Align::Start)
                 .margin_start(10)
                 .margin_top(8)
-                .tooltip_text("Go to this message")
+                .tooltip_text("Go to Message")
                 .build();
             go.add_css_class("flat");
             go.add_css_class("thread-link");
@@ -766,18 +768,21 @@ impl RightPanel {
         self.follow.set_visible(false);
         self.title.set_text("Inbox");
         self.subtitle.set_visible(false);
-        clear(&self.mentions_list);
-        clear(&self.threads_list);
-        clear(&self.saved_list);
+        self.mentions_list.remove_all();
+        self.threads_list.remove_all();
+        self.saved_list.remove_all();
 
         let st = state.borrow();
 
         if st.mentions.is_empty() {
-            self.mentions_list.append(&empty_state(
-                "mail-unread-symbolic",
-                "No recent mentions",
-                "Messages that name you show up here.",
-            ));
+            add_placeholder(
+                &self.mentions_list,
+                &empty_state(
+                    "mail-unread-symbolic",
+                    "No Recent Mentions",
+                    "Messages that name you show up here",
+                ),
+            );
         }
         for post in &st.mentions {
             let channel = st
@@ -799,7 +804,7 @@ impl RightPanel {
             let open = self.on_open_post.clone();
             let jump = self.on_jump.clone();
             let post_id = post.id.clone();
-            row.connect_clicked(move |_| {
+            add_row(&self.mentions_list, &row, move || {
                 if is_reply {
                     open(channel_id.clone(), root_id.clone());
                 } else {
@@ -808,7 +813,6 @@ impl RightPanel {
                     jump(channel_id.clone(), post_id.clone());
                 }
             });
-            self.mentions_list.append(&row);
         }
 
         // Saved posts: the ones you flagged, newest first. They are held as a
@@ -825,11 +829,14 @@ impl RightPanel {
         saved.dedup_by_key(|p| p.id.clone());
 
         if saved.is_empty() {
-            self.saved_list.append(&empty_state(
-                "starred-symbolic",
-                "Nothing saved",
-                "Save a message from its menu and it waits here.",
-            ));
+            add_placeholder(
+                &self.saved_list,
+                &empty_state(
+                    "starred-symbolic",
+                    "No Saved Messages",
+                    "Save a message from its menu and it waits here",
+                ),
+            );
         }
         for post in saved {
             let channel = st
@@ -851,22 +858,24 @@ impl RightPanel {
             let open = self.on_open_post.clone();
             let jump = self.on_jump.clone();
             let post_id = post.id.clone();
-            row.connect_clicked(move |_| {
+            add_row(&self.saved_list, &row, move || {
                 if is_reply {
                     open(channel_id.clone(), root_id.clone());
                 } else {
                     jump(channel_id.clone(), post_id.clone());
                 }
             });
-            self.saved_list.append(&row);
         }
 
         if st.thread_inbox.is_empty() {
-            self.threads_list.append(&empty_state(
-                "chat-message-new-symbolic",
-                "No threads yet",
-                "Threads you follow appear here.",
-            ));
+            add_placeholder(
+                &self.threads_list,
+                &empty_state(
+                    "chat-message-new-symbolic",
+                    "No Threads Yet",
+                    "Threads you follow appear here",
+                ),
+            );
         }
         for thread in &st.thread_inbox {
             let author = st.author_name(&thread.post);
@@ -889,8 +898,7 @@ impl RightPanel {
             );
             let root_id = thread.id.clone();
             let open = self.on_open_thread.clone();
-            row.connect_clicked(move |_| open(root_id.clone()));
-            self.threads_list.append(&row);
+            add_row(&self.threads_list, &row, move || open(root_id.clone()));
         }
     }
 
@@ -962,11 +970,21 @@ fn thread_item(store: &gtk::gio::ListStore, position: u32) -> Option<ThreadItem>
 
 fn render_thread_item(item: &ThreadItem, context: &RenderContext) -> gtk::Widget {
     match item {
-        ThreadItem::Loading => adw::StatusPage::builder()
-            .title("Loading thread…")
-            .vexpand(true)
-            .build()
-            .upcast(),
+        ThreadItem::Loading => {
+            let spinner = gtk::Spinner::builder()
+                .width_request(32)
+                .height_request(32)
+                .halign(gtk::Align::Center)
+                .build();
+            // Dropped with the row when the thread arrives first.
+            chat::start_spinner_later(&spinner, || true);
+            adw::StatusPage::builder()
+                .title("Loading Thread…")
+                .child(&spinner)
+                .vexpand(true)
+                .build()
+                .upcast()
+        }
         ThreadItem::Divider(text) => message::day_separator(text),
         ThreadItem::Post { post, grouped, .. } => message::build(
             post,
@@ -1028,7 +1046,7 @@ fn inbox_row(
     message: &str,
     at: Millis,
     counts: Option<(i64, i64, i64)>,
-) -> gtk::Button {
+) -> gtk::Box {
     let avatar = adw::Avatar::builder()
         .size(32)
         .valign(gtk::Align::Start)
@@ -1055,6 +1073,8 @@ fn inbox_row(
 
     let when = gtk::Label::new(Some(&message::format_relative(at)));
     when.add_css_class("message-timestamp");
+    when.add_css_class("dim-label");
+    when.add_css_class("numeric");
     heading.append(&when);
 
     let preview = gtk::Label::builder()
@@ -1084,6 +1104,8 @@ fn inbox_row(
             message::plural(replies, "reply", "replies")
         )));
         count.add_css_class("message-timestamp");
+        count.add_css_class("dim-label");
+        count.add_css_class("numeric");
         footer.append(&count);
 
         if unread_mentions > 0 {
@@ -1110,28 +1132,59 @@ fn inbox_row(
         .build();
     row_box.append(&avatar);
     row_box.append(&body);
-
-    // A button rather than a list row: the whole entry is one target, and
-    // wiring the click per row is simpler than fishing data back out of a
-    // ListBox selection.
-    let button = gtk::Button::builder().child(&row_box).build();
-    button.add_css_class("flat");
-    button.add_css_class("inbox-row");
-    button
+    row_box
 }
 
-fn list_box() -> gtk::Box {
-    gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(2)
+/// The follow toggle says what pressing it will do.
+fn follow_tooltip(following: bool) -> &'static str {
+    if following {
+        "Unfollow Thread"
+    } else {
+        "Follow Thread"
+    }
+}
+
+/// What a row does when activated, kept on the row itself.
+type RowActivate = Rc<dyn Fn()>;
+
+/// A navigation-sidebar list: rows are one target each, arrow keys move
+/// between them and Enter or a click opens the entry.
+fn list_box() -> gtk::ListBox {
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
         .margin_top(6)
         .margin_bottom(6)
-        .margin_start(6)
-        .margin_end(6)
-        .build()
+        .build();
+    list.add_css_class("navigation-sidebar");
+    list.connect_row_activated(|_, row| {
+        // SAFETY: only `add_row` stores this key, always as a `RowActivate`.
+        if let Some(activate) = unsafe { row.data::<RowActivate>("activate") } {
+            let activate = unsafe { activate.as_ref() }.clone();
+            activate();
+        }
+    });
+    list
 }
 
-fn scroller(child: &gtk::Box) -> gtk::ScrolledWindow {
+fn add_row(list: &gtk::ListBox, child: &gtk::Box, on_activate: impl Fn() + 'static) {
+    let row = gtk::ListBoxRow::builder().child(child).build();
+    let activate: RowActivate = Rc::new(on_activate);
+    unsafe { row.set_data("activate", activate) };
+    list.append(&row);
+}
+
+/// An empty state inside a list: shown, but not a row to land on.
+fn add_placeholder(list: &gtk::ListBox, child: &gtk::Widget) {
+    let row = gtk::ListBoxRow::builder()
+        .child(child)
+        .activatable(false)
+        .selectable(false)
+        .focusable(false)
+        .build();
+    list.append(&row);
+}
+
+fn scroller(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
@@ -1265,6 +1318,7 @@ fn empty_state(icon: &str, title: &str, description: &str) -> gtk::Widget {
         .title(title)
         .description(description)
         .vexpand(true)
+        .css_classes(["compact"])
         .build()
         .upcast()
 }

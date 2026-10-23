@@ -720,6 +720,9 @@ pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
             ui.dispatch(Action::SelectChannel(id));
         }
     }
+    if std::env::var_os("MATRAS_DEMO_DIALOG").is_some() {
+        interactive::present(window, &crate::demo::interactive_dialog(), |_| {}, || {});
+    }
     if std::env::var_os("MATRAS_DEMO_CALL").is_some() {
         ui.dock.show_demo_preview(true);
         ui.dock_visible.set(true);
@@ -2275,6 +2278,7 @@ impl Ui {
                 .xalign(0.0)
                 .build();
             when.add_css_class("message-timestamp");
+            when.add_css_class("dim-label");
 
             let text = gtk::Label::builder()
                 .label(version.source_text())
@@ -2988,6 +2992,7 @@ impl Ui {
                 .xalign(0.0)
                 .build();
             when.add_css_class("message-timestamp");
+            when.add_css_class("dim-label");
 
             let text = gtk::Label::builder()
                 .label(&scheduled.post.message)
@@ -4095,7 +4100,8 @@ impl Ui {
         };
         let Some(team_id) = team else { return };
 
-        self.right.set_mode(rhs::PanelMode::Search(terms.clone()));
+        let shown = rhs::PanelMode::Search(terms.clone());
+        self.right.set_mode(shown.clone());
         self.refresh_panel_mode();
         self.overlay.set_show_sidebar(true);
         self.refresh_messages();
@@ -4108,6 +4114,11 @@ impl Ui {
                 Ok::<_, mattermost_api::Error>((hits.posts, authors, statuses))
             },
             move |result| {
+                // Live search sends a request per pause in typing; an answer
+                // to an older query must not replace the newer one's.
+                if ui.right.mode() != shown {
+                    return;
+                }
                 {
                     let mut st = ui.state.borrow_mut();
                     st.searching = false;
@@ -4145,8 +4156,8 @@ impl Ui {
         };
         let Some(team_id) = team else { return };
 
-        self.right
-            .set_mode(rhs::PanelMode::Search(format!("files: {terms}")));
+        let shown = rhs::PanelMode::Search(format!("files: {terms}"));
+        self.right.set_mode(shown.clone());
         self.refresh_panel_mode();
         self.overlay.set_show_sidebar(true);
         self.refresh_messages();
@@ -4155,6 +4166,9 @@ impl Ui {
         runtime::spawn(
             async move { client.search_files(&team_id, &terms).await },
             move |result| {
+                if ui.right.mode() != shown {
+                    return;
+                }
                 match result {
                     Ok(files) => {
                         // A file hit names the post it is attached to, so the

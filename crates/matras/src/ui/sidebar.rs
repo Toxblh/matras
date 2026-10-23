@@ -143,6 +143,7 @@ impl ChannelSidebar {
         let search_entry = gtk::SearchEntry::builder()
             .placeholder_text("Search messages, or file: to search attachments")
             .hexpand(true)
+            .search_delay(LIVE_SEARCH_DELAY_MS)
             .build();
         let search_bar = gtk::SearchBar::builder()
             .child(&search_entry)
@@ -160,11 +161,29 @@ impl ChannelSidebar {
             .build();
         header.pack_end(&search_button);
 
-        // On activate, not on every keystroke: a post search is a round trip
-        // to the server, and searching per character would be a request per
-        // character.
-        search_entry.connect_activate(move |entry| {
-            if let Some(terms) = submitted_search_terms(entry.text().as_str()) {
+        // Live, but not per keystroke: a post search is a round trip to the
+        // server, so it waits for a pause in typing (`search-delay`) and for
+        // enough of a query to be worth asking about. Enter searches at once,
+        // whatever the length.
+        let on_search = Rc::new(on_search);
+        let last_search: Rc<RefCell<String>> = Rc::default();
+        search_entry.connect_activate({
+            let on_search = on_search.clone();
+            let last_search = last_search.clone();
+            move |entry| {
+                if let Some(terms) = submitted_search_terms(entry.text().as_str()) {
+                    last_search.replace(terms.clone());
+                    on_search(terms);
+                }
+            }
+        });
+        search_entry.connect_search_changed(move |entry| {
+            let Some(terms) = live_search_terms(entry.text().as_str()) else {
+                return;
+            };
+            // Enter may already have asked for exactly this.
+            if *last_search.borrow() != terms {
+                last_search.replace(terms.clone());
                 on_search(terms);
             }
         });
@@ -513,6 +532,19 @@ pub(crate) fn inbox_requires_chat_navigation(collapsed: bool, showing_content: b
     collapsed && !showing_content
 }
 
+/// The pause in typing before a live search goes out.
+const LIVE_SEARCH_DELAY_MS: u32 = 300;
+/// Shorter queries wait for Enter: they match too much to be worth a request.
+const LIVE_SEARCH_MIN_CHARS: usize = 3;
+
+/// The query to search for while typing, if it is long enough. A `file:`
+/// prefix does not count towards the length.
+fn live_search_terms(input: &str) -> Option<String> {
+    let terms = submitted_search_terms(input)?;
+    let query = terms.strip_prefix("file:").unwrap_or(&terms).trim();
+    (query.chars().count() >= LIVE_SEARCH_MIN_CHARS).then_some(terms)
+}
+
 fn submitted_search_terms(input: &str) -> Option<String> {
     let terms = input.trim();
     (!terms.is_empty()).then(|| terms.to_string())
@@ -578,13 +610,65 @@ fn attach_category_menu(
     });
     row.insert_action_group("category", Some(&group));
 
+    attach_context_triggers(
+        row,
+        Rc::new(move |_: &gtk::ListBoxRow, x: f64, y: f64| {
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.popup();
+        }),
+    );
+}
+
+/// Opens a row's context menu at a point in the row.
+type OpenMenu = Rc<dyn Fn(&gtk::ListBoxRow, f64, f64)>;
+
+/// The ways to ask for a row's menu: right click, a long press on a
+/// touchscreen, and Shift+F10 or the Menu key while the row has focus.
+fn attach_context_triggers(row: &gtk::ListBoxRow, open: OpenMenu) {
+    // The row comes from the controller rather than being captured: a
+    // controller belongs to its widget, so a closure holding that widget is
+    // a cycle and the row would never be freed.
     let click = gtk::GestureClick::new();
     click.set_button(gtk::gdk::BUTTON_SECONDARY);
-    click.connect_pressed(move |_, _, x, y| {
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        popover.popup();
+    click.connect_pressed({
+        let open = open.clone();
+        move |gesture, _, x, y| {
+            if let Some(row) = gesture.widget().and_downcast::<gtk::ListBoxRow>() {
+                open(&row, x, y);
+            }
+        }
     });
     row.add_controller(click);
+
+    // A press that turns into the menu must not also select the channel, so
+    // the gesture claims the sequence and the list's own click is cancelled.
+    let long_press = gtk::GestureLongPress::new();
+    long_press.set_touch_only(true);
+    long_press.connect_pressed({
+        let open = open.clone();
+        move |gesture, x, y| {
+            if let Some(row) = gesture.widget().and_downcast::<gtk::ListBoxRow>() {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                open(&row, x, y);
+            }
+        }
+    });
+    row.add_controller(long_press);
+
+    let keys = gtk::EventControllerKey::new();
+    keys.connect_key_pressed(move |controller, key, _, modifier| {
+        let shift_f10 =
+            key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+        if !(shift_f10 || key == gtk::gdk::Key::Menu) {
+            return gtk::glib::Propagation::Proceed;
+        }
+        let Some(row) = controller.widget().and_downcast::<gtk::ListBoxRow>() else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        open(&row, 24.0, f64::from(row.height()) / 2.0);
+        gtk::glib::Propagation::Stop
+    });
+    row.add_controller(keys);
 }
 
 /// The right-click menu on a channel: mute it, favourite it, or file it under
@@ -603,13 +687,13 @@ fn attach_row_menu(
     let mut entries: Vec<(String, String, RowAction)> = Vec::new();
     if state.unread(channel_id).is_unread() {
         entries.push((
-            "Mark as read".to_string(),
+            "Mark as Read".to_string(),
             "read".to_string(),
             RowAction::MarkRead,
         ));
     } else {
         entries.push((
-            "Mark as unread".to_string(),
+            "Mark as Unread".to_string(),
             "unread".to_string(),
             RowAction::MarkUnread,
         ));
@@ -645,18 +729,10 @@ fn attach_row_menu(
     // for every channel in the sidebar, rebuilt on every sidebar refresh, was
     // twenty thousand allocations for menus that are almost never opened.
     let built: Rc<RefCell<Option<gtk::PopoverMenu>>> = Rc::new(RefCell::new(None));
-    let click = gtk::GestureClick::new();
-    click.set_button(gtk::gdk::BUTTON_SECONDARY);
-    click.connect_pressed({
+    let open: OpenMenu = Rc::new({
         let categories = categories.clone();
         let channel_id = channel_id.to_string();
-        // The row comes from the gesture rather than being captured: a
-        // controller belongs to its widget, so a closure holding that widget
-        // is a cycle and the row would never be freed.
-        move |gesture, _, x, y| {
-            let Some(row) = gesture.widget().and_downcast::<gtk::ListBoxRow>() else {
-                return;
-            };
+        move |row, x, y| {
             let mut slot = built.borrow_mut();
             let popover = slot.get_or_insert_with(|| {
                 let menu = gtk::gio::Menu::new();
@@ -674,7 +750,7 @@ fn attach_row_menu(
                 }
 
                 let popover = gtk::PopoverMenu::from_model(Some(&menu));
-                popover.set_parent(&row);
+                popover.set_parent(row);
                 popover.set_has_arrow(false);
                 popover.set_halign(gtk::Align::Start);
                 // A parented popover is a child of the row, and the sidebar
@@ -692,7 +768,7 @@ fn attach_row_menu(
             popover.popup();
         }
     });
-    row.add_controller(click);
+    attach_context_triggers(row, open);
 }
 
 fn category_header(name: &str) -> gtk::ListBoxRow {
@@ -804,6 +880,7 @@ fn channel_row(
     if unread.mentions > 0 {
         let badge = gtk::Label::new(Some(&unread.mentions.to_string()));
         badge.add_css_class("mention-badge");
+        badge.set_tooltip_text(Some(&mention_count(unread.mentions)));
         if unread.urgent {
             badge.add_css_class("urgent");
         }
@@ -813,6 +890,8 @@ fn channel_row(
         // enough to notice, not enough to demand a number be read.
         let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
         dot.add_css_class("unread-dot");
+        dot.add_css_class("dim-label");
+        dot.set_tooltip_text(Some("Unread"));
         row_box.append(&dot);
     }
 
@@ -823,6 +902,7 @@ fn channel_row(
     }
     if unread.muted {
         row_box.add_css_class("channel-row-muted");
+        row_box.add_css_class("dim-label");
     }
 
     // Paint selection/hover on a wrapper around the content margins. This
@@ -832,7 +912,35 @@ fn channel_row(
     background.add_css_class("channel-row-background");
     background.append(&row_box);
 
-    gtk::ListBoxRow::builder().child(&background).build()
+    let row = gtk::ListBoxRow::builder().child(&background).build();
+    // The badge, the dot, the weight and the dimming are all visual; a
+    // screen reader gets the same facts as words.
+    let status = row_status(unread.mentions, unread.is_unread(), unread.muted, has_draft);
+    if !status.is_empty() {
+        row.update_property(&[gtk::accessible::Property::Description(&status)]);
+    }
+    row
+}
+
+fn mention_count(n: i64) -> String {
+    format!("{n} {}", super::message::plural(n, "mention", "mentions"))
+}
+
+/// What a channel row's indicators say, e.g. "3 mentions, muted".
+fn row_status(mentions: i64, unread: bool, muted: bool, draft: bool) -> String {
+    let mut parts = Vec::new();
+    if mentions > 0 {
+        parts.push(mention_count(mentions));
+    } else if unread {
+        parts.push("unread".to_string());
+    }
+    if muted {
+        parts.push("muted".to_string());
+    }
+    if draft {
+        parts.push("draft".to_string());
+    }
+    parts.join(", ")
 }
 
 fn channel_name_label(title: &str) -> gtk::Label {
@@ -1142,6 +1250,7 @@ impl Switcher {
                 } else if *messages > 0 {
                     let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
                     dot.add_css_class("unread-dot");
+                    dot.add_css_class("dim-label");
                     row_box.append(&dot);
                 }
             }
@@ -1159,6 +1268,15 @@ impl Switcher {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn row_status_reads_the_indicators_out() {
+        use super::row_status;
+        assert_eq!(row_status(3, true, true, false), "3 mentions, muted");
+        assert_eq!(row_status(1, true, false, false), "1 mention");
+        assert_eq!(row_status(0, true, false, true), "unread, draft");
+        assert_eq!(row_status(0, false, false, false), "");
+    }
+
     use super::*;
     use mattermost_api::models::{ChannelMember, ClientConfig};
     use mattermost_api::Client;
@@ -1168,6 +1286,16 @@ mod tests {
         let small_width = super::super::profile::presence_badge_size(24);
         let large_width = super::super::profile::presence_badge_size(40);
         assert_eq!((small_width, large_width), (10, 13));
+    }
+
+    #[test]
+    fn live_search_waits_for_three_characters() {
+        use super::live_search_terms;
+        assert_eq!(live_search_terms("ab"), None);
+        assert_eq!(live_search_terms(" abc "), Some("abc".to_string()));
+        assert_eq!(live_search_terms("file: ab"), None);
+        assert_eq!(live_search_terms("file:abc"), Some("file:abc".to_string()));
+        assert_eq!(live_search_terms("ёжик"), Some("ёжик".to_string()));
     }
 
     #[test]

@@ -74,25 +74,8 @@ mod click_tests {
 }
 
 /// Whether a point — in the coordinates of the row a click gesture is
-/// attached to — lands on an attached image's button, the one place in a
-/// message a click has to open the lightbox instead of the thread.
-fn attachment_image_at(gesture: &gtk::GestureClick, x: f64, y: f64) -> bool {
-    let Some(row) = gesture.widget() else {
-        return false;
-    };
-    let mut widget = row.pick(x, y, gtk::PickFlags::DEFAULT);
-    while let Some(current) = widget {
-        if current.has_css_class("attachment-button") {
-            return true;
-        }
-        if current == row {
-            break;
-        }
-        widget = current.parent();
-    }
-    false
-}
-
+/// attached to — lands on a button (an attached image, a profile, the hover
+/// bar), which owns its click instead of the row opening the thread.
 fn message_button_at(gesture: &gtk::GestureClick, x: f64, y: f64) -> bool {
     let Some(row) = gesture.widget() else {
         return false;
@@ -248,6 +231,8 @@ pub fn build(
             .xalign(0.0)
             .build();
         time.add_css_class("message-timestamp");
+        time.add_css_class("dim-label");
+        time.add_css_class("numeric");
 
         let meta = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
@@ -307,6 +292,7 @@ pub fn build(
     if post.is_edited() {
         let edited = gtk::Label::builder().label("(edited)").xalign(0.0).build();
         edited.add_css_class("message-timestamp");
+        edited.add_css_class("dim-label");
         body.append(&edited);
     }
 
@@ -416,6 +402,9 @@ pub fn build(
         footer.append(&open);
         body.append(&footer);
     }
+    // Set when a press turned into the context menu, so its release does not
+    // also open the thread.
+    let menu_opened: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     // A short tap opens the thread. Text stays non-selectable on touch until
     // a long press so GtkScrolledWindow can claim vertical drags first.
     if row_tap_opens_thread(cfg!(target_os = "android")) {
@@ -434,13 +423,14 @@ pub fn build(
         click.connect_pressed({
             let press_at = press_at.clone();
             let over_button = over_button.clone();
+            let menu_opened = menu_opened.clone();
             move |gesture, _, x, y| {
                 press_at.set((x, y));
-                let on_button = if cfg!(target_os = "android") {
-                    message_button_at(gesture, x, y)
-                } else {
-                    attachment_image_at(gesture, x, y)
-                };
+                menu_opened.set(false);
+                // Any button: on the desktop the hover bar's buttons claim
+                // the press, and the cancel handler below would otherwise
+                // take that for a click on the text and open the thread.
+                let on_button = message_button_at(gesture, x, y);
                 over_button.set(on_button);
                 if on_button {
                     // Leave child buttons to their own click handlers.
@@ -455,8 +445,10 @@ pub fn build(
             let allow_thread = options.show_thread_footer;
             let press_at = press_at.clone();
             let over_button = over_button.clone();
+            let menu_opened = menu_opened.clone();
             move |_, presses, x, y| {
                 if over_button.get()
+                    || menu_opened.get()
                     || presses > 1
                     || !allow_thread
                     || !is_click(press_at.get(), (x, y))
@@ -474,8 +466,9 @@ pub fn build(
                 let allow_thread = options.show_thread_footer;
                 let press_at = press_at.clone();
                 let over_button = over_button.clone();
+                let menu_opened = menu_opened.clone();
                 move |gesture, sequence| {
-                    if over_button.get() || !allow_thread {
+                    if over_button.get() || menu_opened.get() || !allow_thread {
                         return;
                     }
                     if let Some(released_at) = gesture.point(sequence) {
@@ -540,6 +533,26 @@ pub fn build(
         row.add_controller(long_press);
         row.append(&body);
     } else {
+        // The hover bar is invisible until the row is pointed at, and an
+        // invisible button must not take clicks: it only accepts the pointer
+        // while the pointer is over the row. Keyboard focus reveals it through
+        // `:focus-within` in the stylesheet.
+        action_bar.set_can_target(false);
+        let motion = gtk::EventControllerMotion::new();
+        let bar = action_bar.downgrade();
+        motion.connect_enter(move |_, _, _| {
+            if let Some(bar) = bar.upgrade() {
+                bar.set_can_target(true);
+            }
+        });
+        let bar = action_bar.downgrade();
+        motion.connect_leave(move |_| {
+            if let Some(bar) = bar.upgrade() {
+                bar.set_can_target(false);
+            }
+        });
+        row.add_controller(motion);
+        attach_post_context_menu(&row, post, actions, mine, &menu_opened);
         row.append(&body_with_hover_actions(
             body.upcast_ref(),
             action_bar.upcast_ref(),
@@ -547,6 +560,85 @@ pub fn build(
     }
 
     row.upcast()
+}
+
+/// The post menu on a right click, or a long press on a touchscreen — the
+/// hover bar never shows without a pointer. Built on first use, like the
+/// "…" button's.
+fn attach_post_context_menu(
+    row: &gtk::Box,
+    post: &Post,
+    actions: &MessageActions,
+    mine: bool,
+    menu_opened: &Rc<Cell<bool>>,
+) {
+    let built: Rc<std::cell::RefCell<Option<gtk::PopoverMenu>>> = Rc::default();
+    let open = Rc::new({
+        let post = post.clone();
+        let actions = actions.clone();
+        move |row: &gtk::Widget, x: f64, y: f64| {
+            let mut slot = built.borrow_mut();
+            let popover = slot.get_or_insert_with(|| {
+                let (menu, group) = post_menu(&post, &actions, mine);
+                row.insert_action_group("post", Some(&group));
+                let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                popover.set_parent(row);
+                popover.set_has_arrow(false);
+                popover.set_halign(gtk::Align::Start);
+                row.connect_destroy({
+                    let popover = popover.clone();
+                    move |_| popover.unparent()
+                });
+                popover
+            });
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.popup();
+        }
+    });
+
+    // The row comes from the gesture rather than being captured: a closure on
+    // a controller that holds the controller's own widget is a cycle.
+    let right_click = gtk::GestureClick::new();
+    right_click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    // Capture, ahead of the selectable labels' own Cut/Copy/Paste menu —
+    // except over a label with text selected, where copying the selection is
+    // what the right click is for.
+    right_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    right_click.connect_pressed({
+        let open = open.clone();
+        move |gesture, _, x, y| {
+            let Some(row) = gesture.widget() else { return };
+            let selection = row
+                .pick(x, y, gtk::PickFlags::DEFAULT)
+                .and_then(|w| w.ancestor(gtk::Label::static_type()).or(Some(w)))
+                .and_downcast::<gtk::Label>()
+                .is_some_and(|label| label.selection_bounds().is_some());
+            if selection {
+                return;
+            }
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            open(&row, x, y);
+        }
+    });
+    row.add_controller(right_click);
+
+    let long_press = gtk::GestureLongPress::new();
+    long_press.set_touch_only(true);
+    // ponytail: over selectable text GtkLabel claims the touch for its own
+    // selection menu and wins; the avatar, name and margins open this one.
+    // Make labels unselectable on touch (as Android does) if that matters.
+    long_press.set_propagation_phase(gtk::PropagationPhase::Capture);
+    long_press.connect_pressed({
+        let menu_opened = menu_opened.clone();
+        move |gesture, x, y| {
+            if let Some(row) = gesture.widget() {
+                menu_opened.set(true);
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                open(&row, x, y);
+            }
+        }
+    });
+    row.add_controller(long_press);
 }
 
 /// Hover controls float over the message instead of taking a permanent
@@ -888,6 +980,8 @@ fn permalink_preview(
     who.add_css_class("message-author");
     let when = gtk::Label::new(Some(&format_time(quoted.create_at)));
     when.add_css_class("message-timestamp");
+    when.add_css_class("dim-label");
+    when.add_css_class("numeric");
 
     let header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -1034,7 +1128,10 @@ fn attachment(
                     },
                     move |result| match result {
                         Ok(bytes) => player.set_data(bytes),
-                        Err(e) => tracing::warn!(error = %e, "could not fetch the media"),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "could not fetch the media");
+                            player.failed("Could not download the file");
+                        }
                     },
                 );
             })
@@ -1098,20 +1195,23 @@ fn save_attachment(
     anchor: &gtk::Button,
 ) {
     let dialog = gtk::FileDialog::builder()
-        .title("Save attachment")
+        .title("Save Attachment")
         .initial_name(&file.name)
         .build();
     let parent = anchor.root().and_downcast::<adw::ApplicationWindow>();
     let client = state.borrow().client.clone();
     let resources = resources.clone();
     let file_id = file.id.clone();
+    let toast_parent = parent.clone();
 
     dialog.save(
-        parent.as_ref(),
+        toast_parent.as_ref(),
         None::<&gtk::gio::Cancellable>,
         move |result| {
             let Ok(target) = result else { return };
             let Some(path) = target.path() else { return };
+            let saved = saved_toast(&path);
+            let parent = parent.clone();
             let client = client.clone();
             let resources = resources.clone();
             let file_id = file_id.clone();
@@ -1128,14 +1228,39 @@ fn save_attachment(
                         .await
                         .map_err(|e| e.to_string())
                 },
-                |result| {
-                    if let Err(e) = result {
-                        tracing::warn!(error = %e, "could not save the attachment");
+                move |result| {
+                    let title = match result {
+                        Ok(()) => saved,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "could not save the attachment");
+                            "Could not save file".to_string()
+                        }
+                    };
+                    if let Some(parent) = parent {
+                        window_toast(&parent, &title);
                     }
                 },
             );
         },
     );
+}
+
+/// The toast title after a file is written: "Saved to" and the file name.
+pub(super) fn saved_toast(path: &std::path::Path) -> String {
+    let name = path.file_name().unwrap_or(path.as_os_str());
+    format!("Saved to {}", name.to_string_lossy())
+}
+
+/// Shows a plain-text toast in the window's toast overlay. The overlay is the
+/// window content, or the main child of the overlay a lightbox puts there.
+pub(super) fn window_toast(window: &adw::ApplicationWindow, title: &str) {
+    let mut content = window.content();
+    if let Some(overlay) = content.clone().and_downcast::<gtk::Overlay>() {
+        content = overlay.child();
+    }
+    if let Some(toasts) = content.and_downcast::<adw::ToastOverlay>() {
+        toasts.add_toast(adw::Toast::builder().title(title).use_markup(false).build());
+    }
 }
 
 /// Opens the full-size image in its own window. The original is behind the
@@ -1227,6 +1352,7 @@ fn render_block(
             label.set_text(&text);
             label.set_wrap(false);
             label.add_css_class("message-code");
+            label.add_css_class("monospace");
             code_scroller(&label).upcast()
         }
     }
@@ -1529,7 +1655,7 @@ fn hover_actions(
 
     let react = gtk::MenuButton::builder()
         .icon_name("face-smile-symbolic")
-        .tooltip_text("Add reaction")
+        .tooltip_text("Add Reaction")
         .build();
     react.add_css_class("flat");
     react.add_css_class("circular");
@@ -1556,7 +1682,7 @@ fn hover_actions(
         } else {
             "non-starred-symbolic"
         })
-        .tooltip_text(if saved { "Remove from saved" } else { "Save" })
+        .tooltip_text(if saved { "Remove From Saved" } else { "Save" })
         .build();
     save.add_css_class("flat");
     save.add_css_class("circular");
@@ -1579,7 +1705,7 @@ fn hover_actions(
     if allow_thread {
         let reply = gtk::Button::builder()
             .icon_name("mail-reply-sender-symbolic")
-            .tooltip_text("Reply in thread")
+            .tooltip_text("Reply in Thread")
             .build();
         reply.add_css_class("flat");
         reply.add_css_class("circular");
@@ -1601,7 +1727,7 @@ fn hover_actions(
 fn overflow_menu(post: &Post, actions: &MessageActions, mine: bool) -> gtk::Widget {
     let button = gtk::MenuButton::builder()
         .icon_name("view-more-symbolic")
-        .tooltip_text("More actions")
+        .tooltip_text("More Actions")
         .build();
     button.add_css_class("flat");
     button.add_css_class("circular");
@@ -1634,28 +1760,28 @@ fn post_menu(
     let group = gtk::gio::SimpleActionGroup::new();
 
     let mut entries: Vec<(&str, &str, PostAction)> = vec![
-        ("Copy text", "copy-text", PostAction::CopyText),
-        ("Copy link", "copy-link", PostAction::CopyLink),
-        ("Mark as unread", "mark-unread", PostAction::MarkUnread),
+        ("Copy Text", "copy-text", PostAction::CopyText),
+        ("Copy Link", "copy-link", PostAction::CopyLink),
+        ("Mark as Unread", "mark-unread", PostAction::MarkUnread),
         ("Forward…", "forward", PostAction::Forward),
-        ("Remind me about this…", "remind", PostAction::Remind),
+        ("Remind Me About This…", "remind", PostAction::Remind),
     ];
     if post.is_pinned {
-        entries.push(("Unpin from channel", "unpin", PostAction::Unpin));
+        entries.push(("Unpin From Channel", "unpin", PostAction::Unpin));
     } else {
-        entries.push(("Pin to channel", "pin", PostAction::Pin));
+        entries.push(("Pin to Channel", "pin", PostAction::Pin));
     }
     // Only worth offering where there is a history to see.
     if post.is_edited() {
-        entries.push(("Edit history", "history", PostAction::History));
+        entries.push(("Edit History", "history", PostAction::History));
     }
     if post.reply_count > 0 {
-        entries.push(("Summarise thread", "summarise", PostAction::Summarise));
-        entries.push(("Move thread…", "move", PostAction::MoveThread));
+        entries.push(("Summarise Thread", "summarise", PostAction::Summarise));
+        entries.push(("Move Thread…", "move", PostAction::MoveThread));
     }
     if mine {
         entries.push(("Edit", "edit", PostAction::Edit));
-        entries.push(("Delete", "delete", PostAction::Delete));
+        entries.push(("Delete…", "delete", PostAction::Delete));
     }
 
     for (label, name, action) in entries {
@@ -1887,6 +2013,7 @@ fn reaction_strip(
         content.append(&emoji_widget(&name, avatars));
         let n = gtk::Label::new(Some(&count.to_string()));
         n.add_css_class("reaction-count");
+        n.add_css_class("dim-label");
         content.append(&n);
 
         let (names, unresolved) = reaction_names(&group, &me, state);
@@ -1898,6 +2025,13 @@ fn reaction_strip(
         if mine {
             chip.add_css_class("mine");
         }
+        // The accent tint is the only thing that says "yours"; tell a screen
+        // reader too. The row is rebuilt when the reaction changes.
+        chip.update_state(&[gtk::accessible::State::Pressed(if mine {
+            gtk::AccessibleTristate::True
+        } else {
+            gtk::AccessibleTristate::False
+        })]);
         chip.connect_clicked({
             let actions = actions.clone();
             let post_id = post.id.clone();
@@ -2371,7 +2505,7 @@ const THREAD_FACES: usize = 5;
 /// The "new messages" landmark: a rule with a label, drawn where reading
 /// stopped.
 pub fn unread_line() -> gtk::Widget {
-    let label = gtk::Label::new(Some("New messages"));
+    let label = gtk::Label::new(Some("New Messages"));
     label.add_css_class("unread-line-label");
 
     let row = gtk::Box::builder()

@@ -53,15 +53,15 @@
 /* Mixed against the foreground rather than fixed greys, so the pill follows
    the light/dark theme and the contrast setting on its own. */
 .channel-list > row:hover > .channel-row-background {
-  background-color: color-mix(in srgb, currentColor 7%, transparent);
+  background-color: alpha(currentColor, 0.07);
 }
 
 .channel-list > row:selected > .channel-row-background {
-  background-color: color-mix(in srgb, currentColor 10%, transparent);
+  background-color: alpha(currentColor, 0.10);
 }
 
 .channel-list > row:selected:hover > .channel-row-background {
-  background-color: color-mix(in srgb, currentColor 13%, transparent);
+  background-color: alpha(currentColor, 0.13);
 }
 
 /* Category headers are labels, not rows: no pill, ever. */
@@ -82,7 +82,6 @@
   min-height: 8px;
   border-radius: 999px;
   background-color: currentColor;
-  opacity: 0.55;
 }
 
 /* Who is in a call, in the channel row. */
@@ -100,13 +99,10 @@
   font-size: 0.85rem;
 }
 
-/* Unread channels are heavier; muted ones recede. Mentions get a pill. */
+/* Unread channels are heavier; muted ones recede (.dim-label). Mentions
+   get a pill. */
 .channel-row-unread {
   font-weight: bold;
-}
-
-.channel-row-muted {
-  opacity: 0.55;
 }
 
 .mention-badge {
@@ -147,7 +143,6 @@
 
 .message-timestamp {
   font-size: 0.8rem;
-  opacity: 0.6;
 }
 
 .message-body {
@@ -166,10 +161,9 @@ link:visited {
   text-decoration: none;
 }
 
-/* A fenced code block. Monospace, on its own tinted panel, so it reads as
-   something quoted rather than as more prose. */
+/* A fenced code block (`.monospace` comes from Adwaita), on its own tinted
+   panel, so it reads as something quoted rather than as more prose. */
 .message-code {
-  font-family: monospace;
   font-size: 0.9rem;
   padding: 6px 8px;
 }
@@ -182,7 +176,6 @@ link:visited {
 
 .message-system {
   font-style: italic;
-  opacity: 0.7;
 }
 
 .message-pending {
@@ -191,7 +184,6 @@ link:visited {
 
 .day-separator {
   font-size: 0.8rem;
-  opacity: 0.7;
   margin: 12px 0 4px 0;
 }
 
@@ -286,27 +278,6 @@ link:visited {
   font-size: 0.8em;
 }
 
-/* The "call in progress" strip above the message list. */
-.call-banner {
-  padding: 6px 12px;
-  background-color: @accent_bg_color;
-  color: @accent_fg_color;
-}
-
-/* On an accent-coloured banner the default button background disappears, so
-   the join button borrows the banner's own foreground for its outline. */
-.call-banner-join {
-  padding: 2px 16px;
-  min-height: 24px;
-  color: @accent_fg_color;
-  background-color: alpha(@accent_fg_color, 0.15);
-  border: 1px solid alpha(@accent_fg_color, 0.5);
-}
-
-.call-banner-join:hover {
-  background-color: alpha(@accent_fg_color, 0.3);
-}
-
 /* ── message affordances ──────────────────────────────────────────────
    The avatar and the author name are both buttons, because both open the
    profile card. They must not *look* like buttons until pointed at. */
@@ -377,7 +348,6 @@ link:visited {
 .reaction-count {
   font-size: 0.75rem;
   font-weight: bold;
-  opacity: 0.75;
 }
 
 .emoji-button {
@@ -405,11 +375,6 @@ link:visited {
 .right-panel {
   border-left: 1px solid @borders;
   background-color: @view_bg_color;
-}
-
-.inbox-row {
-  padding: 0 6px;
-  border-radius: 8px;
 }
 
 /* A count sitting inside a header-bar button. */
@@ -481,19 +446,19 @@ link:visited {
    Only the ring and the hollow offline fill — a coloured dot stays its colour.
    Hover first: on a hovered selected row the selected tint should win. */
 .navigation-sidebar row:hover .presence-badge {
-  border-color: color-mix(in srgb, @sidebar_fg_color 5%, @sidebar_bg_color);
+  border-color: mix(@sidebar_bg_color, @sidebar_fg_color, 0.05);
 }
 
 .navigation-sidebar row:hover .presence-badge.presence-offline {
-  background-color: color-mix(in srgb, @sidebar_fg_color 5%, @sidebar_bg_color);
+  background-color: mix(@sidebar_bg_color, @sidebar_fg_color, 0.05);
 }
 
 .navigation-sidebar row:selected .presence-badge {
-  border-color: color-mix(in srgb, @sidebar_fg_color 10%, @sidebar_bg_color);
+  border-color: mix(@sidebar_bg_color, @sidebar_fg_color, 0.10);
 }
 
 .navigation-sidebar row:selected .presence-badge.presence-offline {
-  background-color: color-mix(in srgb, @sidebar_fg_color 10%, @sidebar_bg_color);
+  background-color: mix(@sidebar_bg_color, @sidebar_fg_color, 0.10);
 }
 
 /* Remote screens and cameras, floating over the panes. Rounded and shadowed so

@@ -492,7 +492,7 @@ impl Player {
             // and it is the same object, so pausing there pauses here.
             let expand = gtk::Button::builder()
                 .icon_name("view-fullscreen-symbolic")
-                .tooltip_text("Fill the window")
+                .tooltip_text("Fill Window")
                 .halign(gtk::Align::End)
                 .valign(gtk::Align::Start)
                 .margin_top(6)
@@ -523,8 +523,10 @@ impl Player {
     }
 
     /// Puts the play button back and says why nothing happened.
-    fn failed(&self, message: &str) {
+    pub fn failed(&self, message: &str) {
         tracing::warn!(message, "could not play the attachment");
+        self.spinner.stop();
+        self.spinner.set_visible(false);
         self.play.set_visible(true);
         self.body.append(&note(message));
     }

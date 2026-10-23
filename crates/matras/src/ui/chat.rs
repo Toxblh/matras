@@ -68,17 +68,20 @@ pub struct ChatView {
     complete: Rc<super::autocomplete::Autocomplete>,
     /// The priority chosen for the next message, as a stateful action.
     priority_action: gtk::gio::SimpleAction,
-    agent_button: gtk::MenuButton,
+    channel_button: gtk::MenuButton,
+    /// The agent entries of the channel menu; empty when there are no agents.
+    agent_section: gtk::gio::Menu,
     /// Kept so the menu can be rebuilt without losing the fixed entries.
     agent_actions: Rc<RefCell<Vec<gtk::gio::SimpleAction>>>,
     inbox_badge: gtk::Label,
-    call_banner: gtk::Box,
-    call_banner_label: gtk::Label,
-    join_button: gtk::Button,
+    call_banner: adw::Banner,
     stack: gtk::Stack,
     /// Runs only while the first page is visibly loading. A permanently
     /// spinning child keeps GTK's frame clock alive even after Stack hides it.
     loading_spinner: gtk::Spinner,
+    /// Bumped whenever loading starts or ends, so a delayed spinner start
+    /// that belongs to an earlier wait does nothing.
+    spinner_epoch: Rc<Cell<u64>>,
     /// Which channel the feed currently holds, so a redraw can tell itself
     /// apart from a channel switch.
     showing: RefCell<Option<String>>,
@@ -230,8 +233,8 @@ fn render_item(item: &FeedItem, context: &RenderContext) -> gtk::Widget {
         FeedItem::Start(title) => start_label(title),
         FeedItem::Empty => adw::StatusPage::builder()
             .icon_name("chat-message-new-symbolic")
-            .title("No messages yet")
-            .description("Say something to get started.")
+            .title("No Messages Yet")
+            .description("Say something to get started")
             .vexpand(true)
             .build()
             .upcast(),
@@ -306,7 +309,7 @@ impl ChatView {
 
         let call_button = gtk::Button::builder()
             .icon_name("call-start-symbolic")
-            .tooltip_text("Start or join a call")
+            .tooltip_text("Start or Join Call")
             .sensitive(false)
             .build();
         call_button.add_css_class("flat");
@@ -330,27 +333,20 @@ impl ChatView {
         inbox_content.append(&inbox_badge);
         let inbox_button = gtk::Button::builder()
             .child(&inbox_content)
-            .tooltip_text("Mentions and threads")
+            .tooltip_text("Mentions and Threads")
             .build();
         inbox_button.add_css_class("flat");
         inbox_button.set_visible(false);
         inbox_button.connect_clicked(move |_| on_inbox());
 
         let header = adw::HeaderBar::builder().title_widget(&title_box).build();
-        // Only there when a server actually has an agent to ask. A menu
-        // rather than a button because there are two different things to want
-        // from an agent: a summary of here, or a conversation with it.
-        let agent_button = gtk::MenuButton::builder()
-            .icon_name("bot-symbolic")
-            .tooltip_text("Agents")
-            .visible(false)
-            .build();
-        agent_button.add_css_class("flat");
+        // Agents live in the channel menu, in a section that stays empty
+        // unless the server actually has one to ask: a summary of here, or a
+        // conversation with it. The header keeps room for the title on a phone.
         let agent_actions = gtk::gio::SimpleActionGroup::new();
         let catch_up = gtk::gio::SimpleAction::new("catch-up", None);
         catch_up.connect_activate(move |_, _| on_agent());
         agent_actions.add_action(&catch_up);
-        agent_button.insert_action_group("agent", Some(&agent_actions));
 
         // What you do to *this* channel, as opposed to the message under the
         // pointer or the list in the sidebar.
@@ -360,38 +356,33 @@ impl ChatView {
         channel_menu.append(Some("Bookmarks…"), Some("win.channel-bookmarks"));
         channel_menu.append(Some("Pinned Messages"), Some("win.pinned-posts"));
         channel_menu.append(Some("Notifications…"), Some("win.channel-notifications"));
-        channel_menu.append(Some("Leave Channel"), Some("win.leave-channel"));
-        channel_menu.append(Some("Archive Channel"), Some("win.archive-channel"));
+        let agent_section = gtk::gio::Menu::new();
+        channel_menu.append_section(None, &agent_section);
+        let danger = gtk::gio::Menu::new();
+        danger.append(Some("Leave Channel…"), Some("win.leave-channel"));
+        danger.append(Some("Archive Channel…"), Some("win.archive-channel"));
+        channel_menu.append_section(None, &danger);
         let channel_button = gtk::MenuButton::builder()
             .icon_name("view-more-symbolic")
-            .tooltip_text("Channel menu")
+            .tooltip_text("Channel Menu")
             .menu_model(&channel_menu)
             .build();
         channel_button.add_css_class("flat");
+        channel_button.insert_action_group("agent", Some(&agent_actions));
 
         header.pack_end(&channel_button);
         header.pack_end(&call_button);
-        header.pack_end(&agent_button);
         header.pack_end(&inbox_button);
 
         // --- call banner
-        let call_banner_label = gtk::Label::builder().xalign(0.0).hexpand(true).build();
-        let call_banner = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(8)
-            .visible(false)
-            .build();
-        call_banner.add_css_class("call-banner");
-        call_banner.append(&gtk::Image::from_icon_name("call-start-symbolic"));
-        call_banner.append(&call_banner_label);
-
         // The banner is where you notice a call, so it is where joining it
         // belongs — the header button is for starting one.
-        let join_button = gtk::Button::with_label("Join");
-        join_button.add_css_class("pill");
-        join_button.add_css_class("call-banner-join");
-        join_button.connect_clicked(move |_| on_call());
-        call_banner.append(&join_button);
+        let call_banner = adw::Banner::builder()
+            .use_markup(false)
+            .button_label("Join")
+            .revealed(false)
+            .build();
+        call_banner.connect_button_clicked(move |_| on_call());
 
         // --- messages
         let messages = gtk::gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -626,13 +617,14 @@ impl ChatView {
             .left_margin(8)
             .right_margin(8)
             .build();
+        entry.update_property(&[gtk::accessible::Property::Label("Message")]);
 
         let entry_frame = build_composer_frame(&entry);
         entry_frame.add_css_class("composer-entry");
 
         let send = gtk::Button::builder()
             .icon_name(COMPOSER_SEND_ICON)
-            .tooltip_text("Send  (Enter)")
+            .tooltip_text("Send")
             .valign(gtk::Align::End)
             .build();
         send.add_css_class("suggested-action");
@@ -838,7 +830,11 @@ impl ChatView {
 
         // Losing the socket is a state of the whole window, not an event, so
         // it gets a banner that stays up rather than a toast that scrolls by.
-        let connection = adw::Banner::builder().revealed(false).build();
+        // The text is a socket error, not markup.
+        let connection = adw::Banner::builder()
+            .use_markup(false)
+            .revealed(false)
+            .build();
 
         let conversation = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -853,8 +849,8 @@ impl ChatView {
 
         let placeholder = adw::StatusPage::builder()
             .icon_name("chat-message-new-symbolic")
-            .title("No channel selected")
-            .description("Pick a channel from the sidebar to start reading.")
+            .title("No Channel Selected")
+            .description("Pick a channel from the sidebar to start reading")
             .build();
 
         let spinner = gtk::Spinner::builder()
@@ -916,13 +912,13 @@ impl ChatView {
             inbox_button,
             inbox_badge,
             call_banner,
-            call_banner_label,
-            join_button,
             stack,
             loading_spinner: spinner,
+            spinner_epoch: Rc::new(Cell::new(0)),
             complete,
             priority_action,
-            agent_button,
+            channel_button,
+            agent_section,
             agent_actions: Rc::new(RefCell::new(vec![catch_up.clone()])),
             typing,
             attachments,
@@ -999,8 +995,11 @@ impl ChatView {
         let topic = self.subtitle.text().to_string();
         let topic = topic.split(" · ").next().unwrap_or("").to_string();
         let line = match count {
-            Some(n) if !topic.is_empty() => format!("{topic} · {n} members"),
-            Some(n) => format!("{n} members"),
+            Some(n) if !topic.is_empty() => format!(
+                "{topic} · {n} {}",
+                super::message::plural(n, "member", "members")
+            ),
+            Some(n) => format!("{n} {}", super::message::plural(n, "member", "members")),
             None => topic,
         };
         self.subtitle.set_visible(!line.is_empty());
@@ -1008,13 +1007,12 @@ impl ChatView {
     }
 
     pub fn set_agents(&self, bots: &[(String, String)], on_open: impl Fn(String) + 'static) {
-        self.agent_button.set_visible(!bots.is_empty());
+        self.agent_section.remove_all();
         if bots.is_empty() {
             return;
         }
-
-        let menu = gtk::gio::Menu::new();
-        menu.append(Some("Catch me up"), Some("agent.catch-up"));
+        self.agent_section
+            .append(Some("Catch Me Up"), Some("agent.catch-up"));
 
         let chats = gtk::gio::Menu::new();
         let on_open = Rc::new(on_open);
@@ -1030,7 +1028,8 @@ impl ChatView {
             group.add_action(&action);
             chats.append(Some(name), Some(&format!("agent.{action_name}")));
         }
-        menu.append_section(None, &chats);
+        self.agent_section
+            .append_submenu(Some("Chat With Agent"), &chats);
 
         // Rebuilding replaces the action group, so the fixed entries have to
         // be carried over or "Catch me up" stops working after the first
@@ -1038,8 +1037,8 @@ impl ChatView {
         for action in self.agent_actions.borrow().iter() {
             group.add_action(action);
         }
-        self.agent_button.set_menu_model(Some(&menu));
-        self.agent_button.insert_action_group("agent", Some(&group));
+        self.channel_button
+            .insert_action_group("agent", Some(&group));
     }
 
     /// Redraws the row of files waiting to go out with the next message.
@@ -1193,11 +1192,11 @@ impl ChatView {
         });
         self.call_button
             .set_tooltip_text(Some(match (in_call, ongoing) {
-                (true, _) => "Leave the call",
+                (true, _) => "Leave Call",
                 // A call is running here and we are outside it: the button
                 // joins, which is not something an icon alone ever says.
-                (false, true) => "Join the call",
-                (false, false) => "Start a call",
+                (false, true) => "Join Call",
+                (false, false) => "Start Call",
             }));
         set_active(&self.call_button, in_call, "destructive-action");
         if in_call {
@@ -1207,20 +1206,21 @@ impl ChatView {
             // with the banner instead of looking idle.
             set_active(&self.call_button, ongoing, "suggested-action");
         }
-        self.join_button.set_visible(!in_call);
+        self.call_banner
+            .set_button_label((!in_call).then_some("Join"));
     }
 
     pub fn set_call_in_progress(&self, participants: Option<usize>) {
         match participants {
             Some(n) => {
-                self.call_banner_label.set_text(&match n {
+                self.call_banner.set_title(&match n {
                     0 => "A call is starting".to_string(),
                     1 => "1 person is in a call".to_string(),
                     n => format!("{n} people are in a call"),
                 });
-                self.call_banner.set_visible(true);
+                self.call_banner.set_revealed(true);
             }
-            None => self.call_banner.set_visible(false),
+            None => self.call_banner.set_revealed(false),
         }
     }
 
@@ -1230,7 +1230,7 @@ impl ChatView {
         self.inbox_button.set_tooltip_text(Some(&if count > 0 {
             format!("{count} unread — mentions and threads")
         } else {
-            "Mentions and threads".to_string()
+            "Mentions and Threads".to_string()
         }));
     }
 
@@ -1774,6 +1774,12 @@ impl ChatView {
         }
     }
 
+    fn stop_loading_spinner(&self) {
+        self.spinner_epoch
+            .set(self.spinner_epoch.get().wrapping_add(1));
+        self.loading_spinner.stop();
+    }
+
     /// Redraws the whole feed for the current channel.
     pub fn refresh(&self, state: &SharedState, avatars: &Avatars, actions: &MessageActions) {
         let st = state.borrow();
@@ -1786,14 +1792,14 @@ impl ChatView {
         let Some(channel_id) = st.current_channel.clone() else {
             drop(st);
             self.set_inbox_count(inbox_count);
-            self.loading_spinner.stop();
+            self.stop_loading_spinner();
             self.stack.set_visible_child_name("empty");
             return;
         };
         let Some(channel) = st.channel(&channel_id).cloned() else {
             drop(st);
             self.set_inbox_count(inbox_count);
-            self.loading_spinner.stop();
+            self.stop_loading_spinner();
             self.stack.set_visible_child_name("empty");
             return;
         };
@@ -1802,10 +1808,15 @@ impl ChatView {
         // with no posts and nothing in flight is genuinely empty.
         let waiting =
             *self.loading.borrow() && st.feeds.get(&channel_id).is_none_or(|f| f.posts.is_empty());
-        if waiting {
-            self.loading_spinner.start();
-        } else {
-            self.loading_spinner.stop();
+        if !waiting {
+            self.stop_loading_spinner();
+        } else if self.stack.visible_child_name().as_deref() != Some("loading") {
+            let epoch = self.spinner_epoch.get().wrapping_add(1);
+            self.spinner_epoch.set(epoch);
+            start_spinner_later(&self.loading_spinner, {
+                let current = self.spinner_epoch.clone();
+                move || current.get() == epoch
+            });
         }
         self.stack
             .set_visible_child_name(if waiting { "loading" } else { "conversation" });
@@ -1993,6 +2004,24 @@ pub(super) fn scroll_list_to_newest(list: &gtk::ListView, items: u32, reason: &s
     });
 }
 
+/// How long a first load may take before a spinner says so. A faster answer
+/// shows no spinner at all instead of a flash of one.
+pub(super) const SPINNER_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Starts `spinner` after [`SPINNER_DELAY`], if it still exists and
+/// `still_waiting` says the wait is not over.
+pub(super) fn start_spinner_later(
+    spinner: &gtk::Spinner,
+    still_waiting: impl Fn() -> bool + 'static,
+) {
+    let spinner = spinner.downgrade();
+    glib::timeout_add_local_once(SPINNER_DELAY, move || {
+        if let Some(spinner) = spinner.upgrade().filter(|_| still_waiting()) {
+            spinner.start();
+        }
+    });
+}
+
 fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
     gtk::Frame::builder().hexpand(true).child(entry).build()
 }
@@ -2001,16 +2030,16 @@ fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
 /// available while letting the message field use almost all of a phone width.
 fn composer_options_menu(priority_menu: &gtk::gio::Menu) -> gtk::gio::Menu {
     let menu = gtk::gio::Menu::new();
-    menu.append(Some("Attach a file"), Some("composer.attach"));
-    menu.append(Some("Send later"), Some("composer.schedule"));
-    menu.append_submenu(Some("Message priority"), priority_menu);
+    menu.append(Some("Attach File…"), Some("composer.attach"));
+    menu.append(Some("Send Later…"), Some("composer.schedule"));
+    menu.append_submenu(Some("Message Priority"), priority_menu);
     menu
 }
 
 fn composer_options_button(menu: &gtk::gio::Menu) -> gtk::MenuButton {
     let button = gtk::MenuButton::builder()
         .icon_name("view-grid-symbolic")
-        .tooltip_text("More message options")
+        .tooltip_text("More Message Options")
         .menu_model(menu)
         .valign(gtk::Align::End)
         .width_request(COMPOSER_OPTIONS_BUTTON_WIDTH)
@@ -2321,15 +2350,15 @@ mod tests {
         assert_eq!(model.n_items(), 3);
         assert_eq!(
             model.item_attribute_value(0, "label", None).unwrap().str(),
-            Some("Attach a file")
+            Some("Attach File…")
         );
         assert_eq!(
             model.item_attribute_value(1, "label", None).unwrap().str(),
-            Some("Send later")
+            Some("Send Later…")
         );
         assert_eq!(
             model.item_attribute_value(2, "label", None).unwrap().str(),
-            Some("Message priority")
+            Some("Message Priority")
         );
     }
 }
