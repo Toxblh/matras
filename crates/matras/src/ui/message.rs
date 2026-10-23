@@ -624,6 +624,10 @@ fn attach_post_context_menu(
 
     let long_press = gtk::GestureLongPress::new();
     long_press.set_touch_only(true);
+    // ponytail: over selectable text GtkLabel claims the touch for its own
+    // selection menu and wins; the avatar, name and margins open this one.
+    // Make labels unselectable on touch (as Android does) if that matters.
+    long_press.set_propagation_phase(gtk::PropagationPhase::Capture);
     long_press.connect_pressed({
         let menu_opened = menu_opened.clone();
         move |gesture, x, y| {
