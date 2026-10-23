@@ -136,8 +136,8 @@ impl RightPanel {
         // Following a thread is how you keep getting told about it after you
         // stop being mentioned in it, so it belongs on the thread itself.
         let follow = gtk::ToggleButton::builder()
-            .icon_name("bookmark-new-symbolic")
-            .tooltip_text("Follow this thread")
+            .icon_name("preferences-system-notifications-symbolic")
+            .tooltip_text(follow_tooltip(false))
             .visible(false)
             .build();
         follow.add_css_class("flat");
@@ -145,6 +145,7 @@ impl RightPanel {
         follow.connect_toggled({
             let updating = updating_follow.clone();
             move |button| {
+                button.set_tooltip_text(Some(follow_tooltip(button.is_active())));
                 if !*updating.borrow() {
                     on_follow(button.is_active());
                 }
@@ -1113,6 +1114,15 @@ fn inbox_row(
     row_box.append(&avatar);
     row_box.append(&body);
     row_box
+}
+
+/// The follow toggle says what pressing it will do.
+fn follow_tooltip(following: bool) -> &'static str {
+    if following {
+        "Unfollow Thread"
+    } else {
+        "Follow Thread"
+    }
 }
 
 /// What a row does when activated, kept on the row itself.
