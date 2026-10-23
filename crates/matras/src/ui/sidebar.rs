@@ -92,33 +92,28 @@ impl ChannelSidebar {
 
         // HeaderBar packs end children in reverse visual order. Build them
         // menu, inbox, search so the visible order reads search, inbox, menu.
-        // The main menu holds actions for the *list*, not any one channel.
+        // The main menu holds actions for the *list*, not any one channel;
+        // the account and its teams are in the avatar's popover (Switcher).
         let menu = gtk::gio::Menu::new();
         let channels_section = gtk::gio::Menu::new();
         channels_section.append(Some("Jump to…"), Some("win.quick-switch"));
-        channels_section.append(Some("Scheduled Messages"), Some("win.scheduled-posts"));
         channels_section.append(Some("New Channel…"), Some("win.new-channel"));
-        channels_section.append(Some("New Category…"), Some("win.new-category"));
-        channels_section.append(Some("Browse Teams…"), Some("win.browse-teams"));
-        channels_section.append(Some("Leave This Team"), Some("win.leave-team"));
         channels_section.append(Some("Browse Channels…"), Some("win.browse-channels"));
+        channels_section.append(Some("New Category…"), Some("win.new-category"));
+        channels_section.append(Some("Scheduled Messages"), Some("win.scheduled-posts"));
         menu.append_section(None, &channels_section);
-        let account_section = gtk::gio::Menu::new();
-        account_section.append(Some("Edit Profile…"), Some("win.edit-profile"));
-        account_section.append(Some("Set a Status…"), Some("win.custom-status"));
-        account_section.append(Some("Notifications…"), Some("win.notification-settings"));
-        account_section.append(Some("Sign Out"), Some("win.sign-out"));
 
+        // Quit stays: with background mode on, closing the window does not.
         let app_section = gtk::gio::Menu::new();
-        app_section.append(Some("Storage…"), Some("win.storage"));
-        app_section.append(Some("Keep Running in Background"), Some("app.background"));
+        app_section.append(Some("Preferences"), Some("win.preferences"));
+        app_section.append(Some("Keyboard Shortcuts"), Some("win.show-help-overlay"));
+        app_section.append(Some("About Matras"), Some("app.about"));
         app_section.append(Some("Quit"), Some("app.quit"));
         menu.append_section(None, &app_section);
-        menu.append_section(None, &account_section);
 
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
-            .tooltip_text("Main menu")
+            .tooltip_text("Main Menu")
             .menu_model(&menu)
             .primary(true)
             .build();
@@ -136,7 +131,7 @@ impl ChannelSidebar {
         inbox_content.append(&inbox_badge);
         let inbox_button = gtk::Button::builder()
             .child(&inbox_content)
-            .tooltip_text("Mentions and threads")
+            .tooltip_text("Mentions and Threads")
             .build();
         inbox_button.add_css_class("flat");
         inbox_button.set_visible(false);
@@ -155,7 +150,7 @@ impl ChannelSidebar {
             .build();
         let search_button = gtk::ToggleButton::builder()
             .icon_name("system-search-symbolic")
-            .tooltip_text("Search messages")
+            .tooltip_text("Search Messages")
             .build();
         search_button.add_css_class("flat");
         search_button
@@ -986,16 +981,21 @@ impl Switcher {
         for (label, value, css) in [
             ("Online", "online", "presence-online"),
             ("Away", "away", "presence-away"),
-            ("Do not disturb", "dnd", "presence-dnd"),
+            ("Do Not Disturb", "dnd", "presence-dnd"),
             ("Offline", "offline", "presence-offline"),
         ] {
-            let dot = gtk::Label::new(Some("●"));
+            // The dot is decoration; the button says what it sets.
+            let dot = gtk::Label::builder()
+                .label("●")
+                .accessible_role(gtk::AccessibleRole::Presentation)
+                .build();
             dot.add_css_class("presence-dot");
             dot.add_css_class(css);
             let button = gtk::Button::builder()
                 .child(&dot)
                 .tooltip_text(label)
                 .build();
+            button.update_property(&[gtk::accessible::Property::Label(label)]);
             button.add_css_class("flat");
             button.connect_clicked({
                 let on_status = on_status.clone();
@@ -1039,14 +1039,6 @@ impl Switcher {
             .child(&teams)
             .build();
 
-        let heading = gtk::Label::builder()
-            .label("TEAMS")
-            .xalign(0.0)
-            .margin_start(12)
-            .build();
-        heading.add_css_class("caption-heading");
-        heading.add_css_class("dim-label");
-
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(6)
@@ -1054,11 +1046,35 @@ impl Switcher {
             .build();
         content.append(&account);
         content.append(&statuses);
-        content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        content.append(&heading);
-        content.append(&teams_scroller);
 
-        button.set_popover(Some(&gtk::Popover::builder().child(&content).build()));
+        // A menu around the two custom pieces: what you do to your account
+        // and to your teams lives with them, not in the main menu.
+        let custom = |id: &str| {
+            let item = gtk::gio::MenuItem::new(None, None);
+            item.set_attribute_value("custom", Some(&id.to_variant()));
+            item
+        };
+        let menu = gtk::gio::Menu::new();
+        let you = gtk::gio::Menu::new();
+        you.append_item(&custom("account"));
+        menu.append_section(None, &you);
+        let account_items = gtk::gio::Menu::new();
+        account_items.append(Some("Edit Profile…"), Some("win.edit-profile"));
+        account_items.append(Some("Set a Status…"), Some("win.custom-status"));
+        menu.append_section(None, &account_items);
+        let team_items = gtk::gio::Menu::new();
+        team_items.append_item(&custom("teams"));
+        team_items.append(Some("Browse Teams…"), Some("win.browse-teams"));
+        team_items.append(Some("Leave Team…"), Some("win.leave-team"));
+        menu.append_section(Some("Teams"), &team_items);
+        let session_items = gtk::gio::Menu::new();
+        session_items.append(Some("Sign Out…"), Some("win.sign-out"));
+        menu.append_section(None, &session_items);
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.add_child(&content, "account");
+        popover.add_child(&teams_scroller, "teams");
+        button.set_popover(Some(&popover));
 
         Switcher {
             button,
