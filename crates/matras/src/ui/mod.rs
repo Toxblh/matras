@@ -699,6 +699,9 @@ pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
             ui.dispatch(Action::SelectChannel(id));
         }
     }
+    if std::env::var_os("MATRAS_DEMO_DIALOG").is_some() {
+        interactive::present(window, &crate::demo::interactive_dialog(), |_| {}, || {});
+    }
     if std::env::var_os("MATRAS_DEMO_CALL").is_some() {
         ui.dock.show_demo_preview(true);
         ui.dock_visible.set(true);

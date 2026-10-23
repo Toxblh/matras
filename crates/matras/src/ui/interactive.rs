@@ -99,7 +99,7 @@ pub fn present(
                 if !hint.is_empty() {
                     group = None;
                 }
-                let group = group.get_or_insert_with(|| {
+                let current = group.get_or_insert_with(|| {
                     let group = adw::PreferencesGroup::new();
                     if !hint.is_empty() {
                         group.set_description(Some(&escaped(&hint)));
@@ -116,7 +116,12 @@ pub fn present(
                     // better than a form with a hole in it.
                     _ => entry_row(element, &revalidate),
                 };
-                group.add(&row);
+                current.add(&row);
+                // The hint describes this field alone, so the next row
+                // starts a group of its own.
+                if !hint.is_empty() {
+                    group = None;
+                }
                 getters.push((name, getter));
                 if let Some(check) = check {
                     checks.borrow_mut().push(check);

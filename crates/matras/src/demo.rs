@@ -12,6 +12,31 @@ use mattermost_api::Client;
 
 use crate::state::{AppState, ChannelFeed, SharedState};
 
+/// A plugin form with each kind of field, for `MATRAS_DEMO_DIALOG=1`.
+pub fn interactive_dialog() -> mattermost_api::models::dialog::Dialog {
+    serde_json::from_value(serde_json::json!({
+        "title": "Create Ticket",
+        "introduction_text": "File a ticket in the tracker.",
+        "submit_label": "Create",
+        "elements": [
+            {"display_name": "Summary", "name": "summary", "type": "text",
+             "placeholder": "One line about the problem",
+             "help_text": "Shown as the ticket title"},
+            {"display_name": "Token", "name": "token", "type": "text", "subtype": "password",
+             "placeholder": "Personal access token"},
+            {"display_name": "Reporter", "name": "reporter", "type": "text", "optional": true},
+            {"display_name": "Details", "name": "details", "type": "textarea", "optional": true,
+             "help_text": "Steps to reproduce"},
+            {"display_name": "Priority", "name": "priority", "type": "select",
+             "help_text": "How soon it needs a look",
+             "options": [{"text": "Low", "value": "low"}, {"text": "High", "value": "high"}]},
+            {"display_name": "Notify the team", "name": "notify", "type": "bool",
+             "help_text": "Posts a link in the channel"}
+        ]
+    }))
+    .expect("static dialog")
+}
+
 /// `2026-08-21T09:00:00Z` in Mattermost's Unix-millisecond timestamps.
 const BASE: Millis = 1_787_302_800_000;
 
