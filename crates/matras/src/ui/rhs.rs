@@ -82,9 +82,9 @@ pub struct RightPanel {
     search_list: gtk::Box,
 
     inbox_stack: gtk::Stack,
-    saved_list: gtk::Box,
-    mentions_list: gtk::Box,
-    threads_list: gtk::Box,
+    saved_list: gtk::ListBox,
+    mentions_list: gtk::ListBox,
+    threads_list: gtk::ListBox,
 
     on_open_thread: Rc<dyn Fn(String)>,
     /// (channel id, root post id — empty when the target is a root post)
@@ -767,14 +767,14 @@ impl RightPanel {
         self.follow.set_visible(false);
         self.title.set_text("Inbox");
         self.subtitle.set_visible(false);
-        clear(&self.mentions_list);
-        clear(&self.threads_list);
-        clear(&self.saved_list);
+        self.mentions_list.remove_all();
+        self.threads_list.remove_all();
+        self.saved_list.remove_all();
 
         let st = state.borrow();
 
         if st.mentions.is_empty() {
-            self.mentions_list.append(&empty_state(
+            add_placeholder(&self.mentions_list, &empty_state(
                 "mail-unread-symbolic",
                 "No Recent Mentions",
                 "Messages that name you show up here",
@@ -800,7 +800,7 @@ impl RightPanel {
             let open = self.on_open_post.clone();
             let jump = self.on_jump.clone();
             let post_id = post.id.clone();
-            row.connect_clicked(move |_| {
+            add_row(&self.mentions_list, &row, move || {
                 if is_reply {
                     open(channel_id.clone(), root_id.clone());
                 } else {
@@ -809,7 +809,6 @@ impl RightPanel {
                     jump(channel_id.clone(), post_id.clone());
                 }
             });
-            self.mentions_list.append(&row);
         }
 
         // Saved posts: the ones you flagged, newest first. They are held as a
@@ -826,7 +825,7 @@ impl RightPanel {
         saved.dedup_by_key(|p| p.id.clone());
 
         if saved.is_empty() {
-            self.saved_list.append(&empty_state(
+            add_placeholder(&self.saved_list, &empty_state(
                 "starred-symbolic",
                 "No Saved Messages",
                 "Save a message from its menu and it waits here",
@@ -852,18 +851,17 @@ impl RightPanel {
             let open = self.on_open_post.clone();
             let jump = self.on_jump.clone();
             let post_id = post.id.clone();
-            row.connect_clicked(move |_| {
+            add_row(&self.saved_list, &row, move || {
                 if is_reply {
                     open(channel_id.clone(), root_id.clone());
                 } else {
                     jump(channel_id.clone(), post_id.clone());
                 }
             });
-            self.saved_list.append(&row);
         }
 
         if st.thread_inbox.is_empty() {
-            self.threads_list.append(&empty_state(
+            add_placeholder(&self.threads_list, &empty_state(
                 "chat-message-new-symbolic",
                 "No Threads Yet",
                 "Threads you follow appear here",
@@ -890,8 +888,7 @@ impl RightPanel {
             );
             let root_id = thread.id.clone();
             let open = self.on_open_thread.clone();
-            row.connect_clicked(move |_| open(root_id.clone()));
-            self.threads_list.append(&row);
+            add_row(&self.threads_list, &row, move || open(root_id.clone()));
         }
     }
 
@@ -1029,7 +1026,7 @@ fn inbox_row(
     message: &str,
     at: Millis,
     counts: Option<(i64, i64, i64)>,
-) -> gtk::Button {
+) -> gtk::Box {
     let avatar = adw::Avatar::builder()
         .size(32)
         .valign(gtk::Align::Start)
@@ -1111,28 +1108,50 @@ fn inbox_row(
         .build();
     row_box.append(&avatar);
     row_box.append(&body);
-
-    // A button rather than a list row: the whole entry is one target, and
-    // wiring the click per row is simpler than fishing data back out of a
-    // ListBox selection.
-    let button = gtk::Button::builder().child(&row_box).build();
-    button.add_css_class("flat");
-    button.add_css_class("inbox-row");
-    button
+    row_box
 }
 
-fn list_box() -> gtk::Box {
-    gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(2)
+/// What a row does when activated, kept on the row itself.
+type RowActivate = Rc<dyn Fn()>;
+
+/// A navigation-sidebar list: rows are one target each, arrow keys move
+/// between them and Enter or a click opens the entry.
+fn list_box() -> gtk::ListBox {
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
         .margin_top(6)
         .margin_bottom(6)
-        .margin_start(6)
-        .margin_end(6)
-        .build()
+        .build();
+    list.add_css_class("navigation-sidebar");
+    list.connect_row_activated(|_, row| {
+        // SAFETY: only `add_row` stores this key, always as a `RowActivate`.
+        if let Some(activate) = unsafe { row.data::<RowActivate>("activate") } {
+            let activate = unsafe { activate.as_ref() }.clone();
+            activate();
+        }
+    });
+    list
 }
 
-fn scroller(child: &gtk::Box) -> gtk::ScrolledWindow {
+fn add_row(list: &gtk::ListBox, child: &gtk::Box, on_activate: impl Fn() + 'static) {
+    let row = gtk::ListBoxRow::builder().child(child).build();
+    let activate: RowActivate = Rc::new(on_activate);
+    unsafe { row.set_data("activate", activate) };
+    list.append(&row);
+}
+
+/// An empty state inside a list: shown, but not a row to land on.
+fn add_placeholder(list: &gtk::ListBox, child: &gtk::Widget) {
+    let row = gtk::ListBoxRow::builder()
+        .child(child)
+        .activatable(false)
+        .selectable(false)
+        .focusable(false)
+        .build();
+    list.append(&row);
+}
+
+fn scroller(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)

@@ -407,11 +407,6 @@ link:visited {
   background-color: @view_bg_color;
 }
 
-.inbox-row {
-  padding: 0 6px;
-  border-radius: 8px;
-}
-
 /* A count sitting inside a header-bar button. */
 .button-badge {
   margin-left: 2px;
