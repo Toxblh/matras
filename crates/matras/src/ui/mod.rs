@@ -461,12 +461,13 @@ pub fn build_window(app: &adw::Application) {
         .default_width(width)
         .default_height(height)
         .width_request(360)
-        .height_request(400)
+        .height_request(294)
         .build();
 
     // Closing uses the same close-request path as the titlebar button; Ctrl+Q
     // remains the separate application-wide quit action.
     shortcuts::install_window_close_shortcut(app, &window);
+    shortcuts::install_help_overlay(app, &window);
 
     let toast_overlay = adw::ToastOverlay::new();
     window.set_content(Some(&toast_overlay));
@@ -1050,7 +1051,7 @@ fn build_session_ui(
     // the sidebar one — only the last matching breakpoint is ever applied.
     let bin = adw::BreakpointBin::builder()
         .width_request(360)
-        .height_request(400)
+        .height_request(294)
         .child(&video_overlay)
         .build();
     toasts.set_child(Some(&bin));

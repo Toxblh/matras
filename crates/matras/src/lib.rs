@@ -129,6 +129,33 @@ pub fn run() -> gtk::glib::ExitCode {
     });
     app.connect_activate(present_or_build);
 
+    // `matras --new-window`: the launcher's "New Window" action. Handled in
+    // the launching process, which asks the running instance over D-Bus.
+    app.add_main_option(
+        "new-window",
+        gtk::glib::Char::from(0u8),
+        gtk::glib::OptionFlags::NONE,
+        gtk::glib::OptionArg::None,
+        "Open a new window",
+        None,
+    );
+    app.connect_handle_local_options(|app, options| {
+        use std::ops::ControlFlow;
+        if !options.contains("new-window") {
+            return ControlFlow::Continue(()); // The normal startup.
+        }
+        if let Err(e) = app.register(gio::Cancellable::NONE) {
+            tracing::error!("could not register the application: {e}");
+            return ControlFlow::Break(gtk::glib::ExitCode::FAILURE);
+        }
+        // Nothing running yet: the ordinary first window is the new one.
+        if !app.is_remote() {
+            return ControlFlow::Continue(());
+        }
+        app.activate_action("new-window", None);
+        ControlFlow::Break(gtk::glib::ExitCode::SUCCESS)
+    });
+
     // `window-removed` rather than `shutdown`: by the time shutdown runs the
     // application has already decided to exit, which is far too late to keep
     // it alive. This fires the moment a window leaves, which is exactly when
@@ -220,6 +247,13 @@ fn add_actions(app: &adw::Application) {
     });
     app.add_action(&new_window);
 
+    let about = gio::SimpleAction::new("about", None);
+    about.connect_activate({
+        let app = app.clone();
+        move |_, _| show_about(&app)
+    });
+    app.add_action(&about);
+
     // Closing the window no longer quits, so something else has to. Dropping
     // the hold first is what lets the application actually go.
     let quit = gio::SimpleAction::new("quit", None);
@@ -232,6 +266,44 @@ fn add_actions(app: &adw::Application) {
     });
     app.add_action(&quit);
     app.set_accels_for_action("app.quit", &["<Control>q"]);
+}
+
+const METAINFO: &str = include_str!("../../../data/ru.toxblh.Matras.metainfo.xml");
+
+/// About Matras. There is no gresource to read the metainfo from, so the
+/// fields are filled in here; the release notes are still the metainfo's.
+fn show_about(app: &adw::Application) {
+    let version = env!("CARGO_PKG_VERSION");
+    let about = adw::AboutDialog::builder()
+        .application_name("Matras")
+        .application_icon(APP_ID)
+        .version(version)
+        .developer_name("Anton Palgunov")
+        .developers(["Anton Palgunov"])
+        .copyright("© 2026 Anton Palgunov")
+        .license_type(gtk::License::Gpl30Only)
+        .website("https://altlinux.space/toxblh/matras")
+        .issue_url("https://altlinux.space/toxblh/matras/issues")
+        .build();
+    if let Some(notes) = release_notes(METAINFO, version) {
+        about.set_release_notes_version(version);
+        about.set_release_notes(notes);
+    }
+    about.present(app.active_window().as_ref());
+}
+
+/// The `<description>` of `version`'s `<release>` in a metainfo file, which is
+/// the markup AdwAboutDialog takes for its release notes.
+fn release_notes<'a>(metainfo: &'a str, version: &str) -> Option<&'a str> {
+    let start = metainfo.find(&format!("<release version=\"{version}\""))?;
+    let release = &metainfo[start..];
+    // `<release …/>` has no notes, and the next `</release>` is someone else's.
+    if release[..release.find('>')?].ends_with('/') {
+        return None;
+    }
+    let release = &release[..release.find("</release>")?];
+    let body = &release[release.find("<description>")? + "<description>".len()..];
+    Some(body[..body.find("</description>")?].trim())
 }
 
 /// Makes the application icon findable.
@@ -261,5 +333,25 @@ fn load_css() {
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{release_notes, METAINFO};
+
+    #[test]
+    fn release_notes_come_from_that_release_only() {
+        let xml = r#"<release version="2.0" date="x"/>
+            <release version="1.0" date="y"><description><p>One</p></description></release>"#;
+        assert_eq!(release_notes(xml, "1.0"), Some("<p>One</p>"));
+        // Self-closing: no notes, rather than the next release's.
+        assert_eq!(release_notes(xml, "2.0"), None);
+        assert_eq!(release_notes(xml, "3.0"), None);
+    }
+
+    #[test]
+    fn this_version_has_release_notes() {
+        assert!(release_notes(METAINFO, env!("CARGO_PKG_VERSION")).is_some());
     }
 }
