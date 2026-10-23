@@ -323,7 +323,7 @@ fn pretty_server(url: &str) -> String {
 enum MenuAction {
     NewChannel,
     BrowseChannels,
-    AccountNotifications,
+    Preferences,
     EditProfile,
     CustomStatus,
     QuickSwitch,
@@ -344,7 +344,6 @@ enum MenuAction {
     ChannelNotifications,
     LeaveChannel,
     PinnedPosts,
-    Storage,
 }
 
 /// How many rows the quick switcher offers per source. Long enough to find
@@ -427,6 +426,24 @@ enum Action {
     FollowThread(bool),
 }
 
+/// A toast showing `message` as text. `AdwToast` reads its title as Pango
+/// markup by default, so an `&` or `<` in an error would blank the toast.
+fn plain_toast(message: &str) -> adw::Toast {
+    adw::Toast::builder()
+        .title(message.trim_end_matches('.'))
+        .use_markup(false)
+        .build()
+}
+
+/// What went wrong, for a person: server and network failures in words, and
+/// anything we have no wording for as its own text.
+fn human_error(error: &(dyn std::error::Error + 'static)) -> String {
+    match error.downcast_ref::<mattermost_api::Error>() {
+        Some(e) => login::describe_failure(e),
+        None => error.to_string(),
+    }
+}
+
 pub fn build_window(app: &adw::Application) {
     // `MATRAS_SIZE=400x800` opens at a phone-sized window, which is the only
     // practical way to look at the collapsed layout without a phone.
@@ -444,12 +461,13 @@ pub fn build_window(app: &adw::Application) {
         .default_width(width)
         .default_height(height)
         .width_request(360)
-        .height_request(400)
+        .height_request(294)
         .build();
 
     // Closing uses the same close-request path as the titlebar button; Ctrl+Q
     // remains the separate application-wide quit action.
     shortcuts::install_window_close_shortcut(app, &window);
+    shortcuts::install_help_overlay(app, &window);
 
     let toast_overlay = adw::ToastOverlay::new();
     window.set_content(Some(&toast_overlay));
@@ -495,7 +513,10 @@ pub fn build_window(app: &adw::Application) {
                 },
                 move |result| match result {
                     Ok((client, me)) => start_session(&window_, &toasts, client, me),
-                    Err(e) => toasts.add_toast(adw::Toast::new(&format!("Sign-in failed: {e}"))),
+                    Err(e) => toasts.add_toast(plain_toast(&format!(
+                        "Sign-in failed: {}",
+                        login::describe(&e)
+                    ))),
                 },
             );
             window.present();
@@ -1030,7 +1051,7 @@ fn build_session_ui(
     // the sidebar one — only the last matching breakpoint is ever applied.
     let bin = adw::BreakpointBin::builder()
         .width_request(360)
-        .height_request(400)
+        .height_request(294)
         .child(&video_overlay)
         .build();
     toasts.set_child(Some(&bin));
@@ -1152,7 +1173,7 @@ fn build_session_ui(
     for (name, action) in [
         ("new-channel", MenuAction::NewChannel),
         ("browse-channels", MenuAction::BrowseChannels),
-        ("notification-settings", MenuAction::AccountNotifications),
+        ("preferences", MenuAction::Preferences),
         ("edit-profile", MenuAction::EditProfile),
         ("quick-switch", MenuAction::QuickSwitch),
         ("sign-out", MenuAction::SignOut),
@@ -1173,7 +1194,6 @@ fn build_session_ui(
         ("channel-notifications", MenuAction::ChannelNotifications),
         ("leave-channel", MenuAction::LeaveChannel),
         ("pinned-posts", MenuAction::PinnedPosts),
-        ("storage", MenuAction::Storage),
     ] {
         let entry = gtk::gio::SimpleAction::new(name, None);
         entry.connect_activate({
@@ -1192,6 +1212,7 @@ fn build_session_ui(
             ("win.inbox", shortcuts::INBOX_ACCELERATOR),
             ("win.close-panel", &["Escape"]),
             ("win.new-channel", &["<Control>n"]),
+            ("win.preferences", &["<Control>comma"]),
             ("win.next-unread", &["<Control><Shift>Down"]),
             ("win.previous-unread", &["<Control><Shift>Up"]),
         ] {
@@ -1380,7 +1401,77 @@ enum PostChange {
 
 impl Ui {
     fn toast(&self, message: &str) {
-        self.toasts.add_toast(adw::Toast::new(message));
+        self.toasts.add_toast(plain_toast(message));
+    }
+
+    /// The start failed. With last time's channels on screen that is a state
+    /// of the connection, said by its banner, with a Retry on the toast; with
+    /// nothing saved there is nothing to show, so the whole window says why
+    /// and offers to try again.
+    fn show_load_failure(self: &Rc<Self>, error: &mattermost_api::Error, had_cache: bool) {
+        let reason = login::describe_failure(error);
+        let retry = {
+            let ui = self.clone();
+            move || bootstrap(ui.clone(), None)
+        };
+        if had_cache {
+            self.chat
+                .set_connection_problem(Some("Offline — showing saved messages"));
+            let toast = adw::Toast::builder()
+                .title(format!("Could not load your account: {reason}"))
+                .use_markup(false)
+                .button_label("Retry")
+                .timeout(0)
+                .build();
+            toast.connect_button_clicked(move |_| retry());
+            self.toasts.add_toast(toast);
+            return;
+        }
+
+        let Some(session) = self.toasts.child() else {
+            return;
+        };
+        let button = gtk::Button::builder()
+            .label("Retry")
+            .halign(gtk::Align::Center)
+            .build();
+        button.add_css_class("pill");
+        button.add_css_class("suggested-action");
+        let page = adw::StatusPage::builder()
+            .icon_name("network-offline-symbolic")
+            .title("Could Not Load Your Account")
+            .description(glib::markup_escape_text(&reason))
+            .child(&button)
+            .vexpand(true)
+            .build();
+        let view = adw::ToolbarView::new();
+        view.add_top_bar(&adw::HeaderBar::new());
+        view.set_content(Some(&page));
+        self.toasts.set_child(Some(&view));
+        button.connect_clicked({
+            let toasts = self.toasts.clone();
+            move |_| {
+                toasts.set_child(Some(&session));
+                retry();
+            }
+        });
+        button.grab_focus();
+    }
+
+    /// The account's "Notification sound" switch; on unless turned off.
+    fn notification_sound(&self) -> bool {
+        self.state
+            .borrow()
+            .me
+            .notify_props
+            .get("desktop_sound")
+            .map(String::as_str)
+            != Some("false")
+    }
+
+    /// A failure, in words rather than as the error's own debug text.
+    fn toast_error(&self, what: &str, error: &(dyn std::error::Error + 'static)) {
+        self.toast(&format!("{what}: {}", human_error(error)));
     }
 
     fn dispatch(&self, action: Action) {
@@ -1591,7 +1682,7 @@ impl Ui {
             },
             move |result| {
                 if let Err(e) = result {
-                    ui.toast(&format!("Could not do that: {e}"));
+                    ui.toast_error("Could not do that", &e);
                 }
             },
         );
@@ -1613,7 +1704,7 @@ impl Ui {
             async move { session.raise_hand(raise).await },
             move |result| {
                 if let Err(e) = result {
-                    ui.toast(&format!("Could not do that: {e}"));
+                    ui.toast_error("Could not do that", &e);
                 }
             },
         );
@@ -1863,7 +1954,7 @@ impl Ui {
             async move { client.set_status(&me, &status).await },
             move |result| {
                 if let Err(e) = result {
-                    ui.toast(&format!("Could not change your status: {e}"));
+                    ui.toast_error("Could not change your status", &e);
                 }
             },
         );
@@ -1937,7 +2028,7 @@ impl Ui {
             move |result| match result {
                 // The summary is a DM from the bot, so go and read it there.
                 Ok(target) => ui.dispatch(Action::OpenPost(target.channel_id, target.post_id)),
-                Err(e) => ui.toast(&format!("The agent could not answer: {e}")),
+                Err(e) => ui.toast_error("The agent could not answer", &e),
             },
         );
     }
@@ -1982,7 +2073,7 @@ impl Ui {
                     text => text.to_string(),
                 };
                 if let Some(app) = self.window.application() {
-                    notify::show(&app, &channel_id, &title, &body);
+                    notify::show(&app, &channel_id, &title, &body, self.notification_sound());
                 }
             }
             // Authoritative count, so it replaces ours rather than adjusting it.
@@ -2020,7 +2111,7 @@ impl Ui {
                 // Success arrives as post_edited over the socket, so only the
                 // failure needs saying.
                 if let Err(e) = result {
-                    ui.toast(&format!("Could not save the edit: {e}"));
+                    ui.toast_error("Could not save the edit", &e);
                 }
             },
         );
@@ -2030,7 +2121,7 @@ impl Ui {
         match action {
             MenuAction::NewChannel => self.new_channel(),
             MenuAction::BrowseChannels => self.browse_channels(),
-            MenuAction::AccountNotifications => self.account_notifications(),
+            MenuAction::Preferences => self.preferences(),
             MenuAction::EditProfile => self.edit_profile(),
             MenuAction::QuickSwitch => self.quick_switch(),
             MenuAction::SignOut => self.sign_out(),
@@ -2051,7 +2142,6 @@ impl Ui {
             MenuAction::ChannelNotifications => self.channel_notifications(),
             MenuAction::LeaveChannel => self.leave_channel(),
             MenuAction::PinnedPosts => self.show_pinned(),
-            MenuAction::Storage => storage::show(&self.window, self.avatars.resources()),
         }
     }
 
@@ -2087,7 +2177,7 @@ impl Ui {
                         ui.schedule_sidebar_reload();
                         ui.dispatch(Action::SelectChannel(channel.id));
                     }
-                    Err(e) => ui.toast(&format!("Could not create it: {e}")),
+                    Err(e) => ui.toast_error("Could not create it", &e),
                 },
             );
         });
@@ -2150,7 +2240,7 @@ impl Ui {
                             ui.schedule_sidebar_reload();
                             ui.dispatch(Action::SelectChannel(member.channel_id));
                         }
-                        Err(e) => ui.toast(&format!("Could not join: {e}")),
+                        Err(e) => ui.toast_error("Could not join", &e),
                     },
                 );
             },
@@ -2220,8 +2310,8 @@ impl Ui {
                         runtime::spawn(
                             async move { client.restore_post_version(&post_id, &version_id).await },
                             move |result| match result {
-                                Ok(_) => ui.toast("Restored."),
-                                Err(e) => ui.toast(&format!("Could not restore it: {e}")),
+                                Ok(_) => ui.toast("Restored"),
+                                Err(e) => ui.toast_error("Could not restore it", &e),
                             },
                         );
                     }
@@ -2232,23 +2322,9 @@ impl Ui {
             list.append(&entry);
         }
 
-        let window = adw::Window::builder()
-            .title("Edit history")
-            .transient_for(&self.window)
-            .modal(true)
-            .default_width(520)
-            .default_height(420)
-            .build();
-        let view = adw::ToolbarView::new();
-        view.add_top_bar(&adw::HeaderBar::new());
-        view.set_content(Some(
-            &gtk::ScrolledWindow::builder()
-                .hscrollbar_policy(gtk::PolicyType::Never)
-                .child(&list)
-                .build(),
-        ));
-        window.set_content(Some(&view));
-        window.present();
+        let dialog = dialogs::list_dialog("Edit History", None, &list);
+        dialog.set_content_width(520);
+        dialog.present(Some(&self.window));
     }
 
     /// Sends what is in the composer at a chosen time.
@@ -2258,7 +2334,7 @@ impl Ui {
     fn schedule_message(self: &Rc<Self>) {
         let text = self.chat.composer_text();
         if text.trim().is_empty() {
-            self.toast("Write the message first.");
+            self.toast("Write the message first");
             return;
         }
         let (client, channel_id) = {
@@ -2287,9 +2363,9 @@ impl Ui {
                         // The composer is empty now, so the draft goes too.
                         ui.chat.set_composer_text("");
                         ui.save_draft();
-                        ui.toast("Scheduled.");
+                        ui.toast("Scheduled");
                     }
-                    Err(e) => ui.toast(&format!("Could not schedule it: {e}")),
+                    Err(e) => ui.toast_error("Could not schedule it", &e),
                 },
             );
         });
@@ -2316,7 +2392,7 @@ impl Ui {
                         // The server broadcasts multiple_channels_viewed, which
                         // is what actually clears the badge.
                         Ok(_) => ui.schedule_sidebar_reload(),
-                        Err(e) => ui.toast(&format!("Could not mark it read: {e}")),
+                        Err(e) => ui.toast_error("Could not mark it read", &e),
                     },
                 );
             }
@@ -2336,7 +2412,7 @@ impl Ui {
                             }
                             ui.schedule_sidebar_reload();
                         }
-                        Err(e) => ui.toast(&format!("Could not mark it unread: {e}")),
+                        Err(e) => ui.toast_error("Could not mark it unread", &e),
                     },
                 );
             }
@@ -2357,7 +2433,7 @@ impl Ui {
                     },
                     move |result| match result {
                         Ok(()) => ui.schedule_sidebar_reload(),
-                        Err(e) => ui.toast(&format!("Could not change that: {e}")),
+                        Err(e) => ui.toast_error("Could not change that", &e),
                     },
                 );
             }
@@ -2372,7 +2448,7 @@ impl Ui {
                     .map(|c| c.display_name.clone())
                     .unwrap_or_default();
                 let ui = self.clone();
-                dialogs::name_category(&self.window, "Rename category", &current, move |name| {
+                dialogs::name_category(&self.window, "Rename Category", &current, move |name| {
                     let Some(mut category) = ui
                         .state
                         .borrow()
@@ -2397,7 +2473,7 @@ impl Ui {
                         },
                         move |result| match result {
                             Ok(_) => ui.schedule_sidebar_reload(),
-                            Err(e) => ui.toast(&format!("Could not rename it: {e}")),
+                            Err(e) => ui.toast_error("Could not rename it", &e),
                         },
                     );
                 });
@@ -2410,7 +2486,7 @@ impl Ui {
                     async move { client.delete_category(&me, &team_id, &channel_id).await },
                     move |result| match result {
                         Ok(()) => ui.schedule_sidebar_reload(),
-                        Err(e) => ui.toast(&format!("Could not delete it: {e}")),
+                        Err(e) => ui.toast_error("Could not delete it", &e),
                     },
                 );
             }
@@ -2429,7 +2505,7 @@ impl Ui {
                     async move { client.update_categories(&me, &team_id, &categories).await },
                     move |result| match result {
                         Ok(_) => ui.schedule_sidebar_reload(),
-                        Err(e) => ui.toast(&format!("Could not move it: {e}")),
+                        Err(e) => ui.toast_error("Could not move it", &e),
                     },
                 );
             }
@@ -2438,7 +2514,7 @@ impl Ui {
 
     fn new_category(self: &Rc<Self>) {
         let ui = self.clone();
-        dialogs::name_category(&self.window, "New category", "", move |name| {
+        dialogs::name_category(&self.window, "New Category", "", move |name| {
             let (client, me, team_id) = {
                 let st = ui.state.borrow();
                 (
@@ -2459,7 +2535,7 @@ impl Ui {
                 async move { client.create_category(&me, &team_id, &category).await },
                 move |result| match result {
                     Ok(_) => ui.schedule_sidebar_reload(),
-                    Err(e) => ui.toast(&format!("Could not create it: {e}")),
+                    Err(e) => ui.toast_error("Could not create it", &e),
                 },
             );
         });
@@ -2481,7 +2557,7 @@ impl Ui {
         };
 
         let ui = self.clone();
-        dialogs::confirm_leave(&self.window, &name, move || {
+        dialogs::confirm_leave_team(&self.window, &name, move || {
             let client = client.clone();
             let me = me.clone();
             let team_id = team_id.clone();
@@ -2498,7 +2574,7 @@ impl Ui {
                             ui.dispatch(Action::SelectTeam(team_id));
                         }
                     }
-                    Err(e) => ui.toast(&format!("Could not leave: {e}")),
+                    Err(e) => ui.toast_error("Could not leave", &e),
                 },
             );
         });
@@ -2537,7 +2613,7 @@ impl Ui {
                 move |result| match result {
                     // channel_updated comes back over the socket and repaints.
                     Ok(_) => {}
-                    Err(e) => ui.toast(&format!("Could not save that: {e}")),
+                    Err(e) => ui.toast_error("Could not save that", &e),
                 },
             );
         });
@@ -2569,7 +2645,7 @@ impl Ui {
                         ui.schedule_sidebar_reload();
                         ui.refresh_messages();
                     }
-                    Err(e) => ui.toast(&format!("Could not archive it: {e}")),
+                    Err(e) => ui.toast_error("Could not archive it", &e),
                 },
             );
         });
@@ -2648,8 +2724,8 @@ impl Ui {
                 runtime::spawn(
                     async move { client.join_channel(&channel_id, &user_id).await },
                     move |result| match result {
-                        Ok(_) => ui.toast("Added."),
-                        Err(e) => ui.toast(&format!("Could not add them: {e}")),
+                        Ok(_) => ui.toast("Added"),
+                        Err(e) => ui.toast_error("Could not add them", &e),
                     },
                 );
             },
@@ -2668,8 +2744,8 @@ impl Ui {
                     runtime::spawn(
                         async move { client.leave_channel(&channel_id, &user_id).await },
                         move |result| match result {
-                            Ok(()) => ui.toast("Removed."),
-                            Err(e) => ui.toast(&format!("Could not remove them: {e}")),
+                            Ok(()) => ui.toast("Removed"),
+                            Err(e) => ui.toast_error("Could not remove them", &e),
                         },
                     );
                 });
@@ -2742,7 +2818,7 @@ impl Ui {
                                 list.set_bookmarks(rows);
                             }
                         }
-                        Err(e) => ui.toast(&format!("Bookmarks are not available here: {e}")),
+                        Err(e) => ui.toast_error("Bookmarks are not available here", &e),
                     },
                 );
             }
@@ -2790,7 +2866,7 @@ impl Ui {
                     async move { client.delete_bookmark(&channel_id, &bookmark_id).await },
                     move |result| {
                         if let Err(e) = result {
-                            ui.toast(&format!("Could not remove it: {e}"));
+                            ui.toast_error("Could not remove it", &e);
                         }
                         refill();
                     },
@@ -2823,7 +2899,7 @@ impl Ui {
                             ui.reload_teams();
                             ui.dispatch(Action::SelectTeam(member.team_id));
                         }
-                        Err(e) => ui.toast(&format!("Could not join: {e}")),
+                        Err(e) => ui.toast_error("Could not join", &e),
                     },
                 );
             },
@@ -2863,7 +2939,7 @@ impl Ui {
             async move { client.scheduled_posts_for_team(&team_id).await },
             move |result| match result {
                 Ok(value) => ui.show_scheduled(value),
-                Err(e) => ui.toast(&format!("Could not load them: {e}")),
+                Err(e) => ui.toast_error("Could not load scheduled messages", &e),
             },
         );
     }
@@ -2889,12 +2965,18 @@ impl Ui {
             list.append(
                 &adw::StatusPage::builder()
                     .icon_name("alarm-symbolic")
-                    .title("Nothing scheduled")
-                    .description("Messages you send later wait here.")
+                    .title("No Scheduled Messages")
+                    .description("Messages you send later wait here")
                     .css_classes(["compact"])
                     .build(),
             );
         }
+
+        // Deleting is undone from a toast, so the toasts live in the dialog
+        // where they can be seen, and the delete itself waits for the toast
+        // to go away.
+        let toasts = adw::ToastOverlay::new();
+        let pending: Rc<RefCell<Vec<adw::Toast>>> = Rc::default();
 
         for scheduled in posts {
             let when = gtk::Label::builder()
@@ -2919,7 +3001,7 @@ impl Ui {
             // that the time was wrong.
             let reschedule = gtk::Button::builder()
                 .icon_name("alarm-symbolic")
-                .tooltip_text("Change the time")
+                .tooltip_text("Reschedule")
                 .valign(gtk::Align::Center)
                 .build();
             reschedule.add_css_class("flat");
@@ -2939,38 +3021,21 @@ impl Ui {
                         runtime::spawn(
                             async move { client.update_scheduled_post(&id, &updated).await },
                             move |result| match result {
-                                Ok(_) => ui.toast("Rescheduled."),
-                                Err(e) => ui.toast(&format!("Could not reschedule it: {e}")),
+                                Ok(_) => ui.toast("Rescheduled"),
+                                Err(e) => ui.toast_error("Could not reschedule it", &e),
                             },
                         );
                     });
                 }
             });
 
-            let cancel = gtk::Button::builder()
+            let delete = gtk::Button::builder()
                 .icon_name("user-trash-symbolic")
-                .tooltip_text("Cancel")
+                .tooltip_text("Delete Scheduled Message")
                 .valign(gtk::Align::Center)
                 .build();
-            cancel.add_css_class("flat");
-            cancel.add_css_class("circular");
-            cancel.connect_clicked({
-                let ui = self.clone();
-                let id = scheduled.post.id.clone();
-                move |button| {
-                    button.set_sensitive(false);
-                    let client = ui.state.borrow().client.clone();
-                    let id = id.clone();
-                    let ui = ui.clone();
-                    runtime::spawn(
-                        async move { client.delete_scheduled_post(&id).await },
-                        move |result| match result {
-                            Ok(()) => ui.toast("Cancelled."),
-                            Err(e) => ui.toast(&format!("Could not cancel it: {e}")),
-                        },
-                    );
-                }
-            });
+            delete.add_css_class("flat");
+            delete.add_css_class("circular");
 
             let body = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
@@ -2985,72 +3050,122 @@ impl Ui {
                 .build();
             row.append(&body);
             row.append(&reschedule);
-            row.append(&cancel);
+            row.append(&delete);
             list.append(&row);
+
+            delete.connect_clicked({
+                let ui = self.clone();
+                let id = scheduled.post.id.clone();
+                let toasts = toasts.clone();
+                let pending = pending.clone();
+                let row = row.clone();
+                move |_| {
+                    row.set_visible(false);
+                    let toast = adw::Toast::builder()
+                        .title("Scheduled message deleted")
+                        .button_label("Undo")
+                        .build();
+                    let undone = Rc::new(std::cell::Cell::new(false));
+                    toast.connect_button_clicked({
+                        let undone = undone.clone();
+                        let row = row.clone();
+                        move |_| {
+                            undone.set(true);
+                            row.set_visible(true);
+                        }
+                    });
+                    toast.connect_dismissed({
+                        let ui = ui.clone();
+                        let id = id.clone();
+                        let row = row.clone();
+                        let pending = pending.clone();
+                        move |toast| {
+                            pending.borrow_mut().retain(|t| t != toast);
+                            if undone.get() {
+                                return;
+                            }
+                            let client = ui.state.borrow().client.clone();
+                            let id = id.clone();
+                            let ui = ui.clone();
+                            let row = row.clone();
+                            runtime::spawn(
+                                async move { client.delete_scheduled_post(&id).await },
+                                move |result| {
+                                    if let Err(e) = result {
+                                        row.set_visible(true);
+                                        ui.toast_error("Could not delete it", &e);
+                                    }
+                                },
+                            );
+                        }
+                    });
+                    pending.borrow_mut().push(toast.clone());
+                    toasts.add_toast(toast);
+                }
+            });
         }
 
-        let window = adw::Window::builder()
-            .title("Scheduled messages")
-            .transient_for(&self.window)
-            .modal(true)
-            .default_width(520)
-            .default_height(440)
-            .build();
-        let view = adw::ToolbarView::new();
-        view.add_top_bar(&adw::HeaderBar::new());
-        view.set_content(Some(
+        toasts.set_child(Some(
             &gtk::ScrolledWindow::builder()
                 .hscrollbar_policy(gtk::PolicyType::Never)
-                .child(&list)
+                .vexpand(true)
+                .child(&adw::Clamp::builder().maximum_size(560).child(&list).build())
                 .build(),
         ));
-        window.set_content(Some(&view));
-        window.present();
+        let view = adw::ToolbarView::new();
+        view.add_top_bar(&adw::HeaderBar::new());
+        view.set_content(Some(&toasts));
+        let dialog = adw::Dialog::builder()
+            .title("Scheduled Messages")
+            .content_width(520)
+            .content_height(440)
+            .child(&view)
+            .build();
+        // Closing the dialog is not undoing anything: deletes still waiting on
+        // their toast go through now rather than being lost with it.
+        dialog.connect_closed(move |_| {
+            let waiting: Vec<adw::Toast> = pending.borrow().clone();
+            for toast in waiting {
+                toast.dismiss();
+            }
+        });
+        dialog.present(Some(&self.window));
     }
 
     /// Signs out of this server, forgetting its token and its cached
     /// messages, and leaves any other server signed in.
     fn sign_out(self: &Rc<Self>) {
-        let dialog = adw::MessageDialog::new(
-            Some(&self.window),
-            Some("Sign out?"),
-            Some("This device will forget the session. Anything unsent is lost."),
-        );
-        dialog.add_responses(&[("cancel", "Cancel"), ("sign-out", "Sign Out")]);
-        dialog.set_response_appearance("sign-out", adw::ResponseAppearance::Destructive);
-        dialog.set_default_response(Some("cancel"));
-        dialog.set_close_response("cancel");
-
         let ui = self.clone();
-        dialog.connect_response(None, move |dialog, response| {
-            dialog.close();
-            if response != "sign-out" {
-                return;
-            }
-            let client = ui.state.borrow().client.clone();
-            let server = client.site_url().to_string();
-            crate::cache::clear();
-            let stored = server.clone();
-            runtime::spawn(
-                async move {
-                    if let Err(e) = crate::store::Store::clear(&stored).await {
-                        tracing::warn!(error = %e, "could not delete the local messages");
-                    }
-                },
-                |_| {},
-            );
-            runtime::spawn(
-                async move {
-                    // Revoke it server-side too, so a copy that leaked with
-                    // the file is useless rather than merely forgotten.
-                    let _ = client.logout().await;
-                    crate::session::forget_async(&server).await;
-                },
-                |_| {},
-            );
-            ui.window.close();
-        });
-        dialog.present();
+        dialogs::confirm(
+            &self.window,
+            "Sign Out?",
+            "This device will forget the session, and anything unsent is lost.",
+            "Sign Out",
+            move || {
+                let client = ui.state.borrow().client.clone();
+                let server = client.site_url().to_string();
+                crate::cache::clear();
+                let stored = server.clone();
+                runtime::spawn(
+                    async move {
+                        if let Err(e) = crate::store::Store::clear(&stored).await {
+                            tracing::warn!(error = %e, "could not delete the local messages");
+                        }
+                    },
+                    |_| {},
+                );
+                runtime::spawn(
+                    async move {
+                        // Revoke it server-side too, so a copy that leaked with
+                        // the file is useless rather than merely forgotten.
+                        let _ = client.logout().await;
+                        crate::session::forget_async(&server).await;
+                    },
+                    |_| {},
+                );
+                ui.window.close();
+            },
+        );
     }
 
     /// Moves to the next or previous channel with something unread, in
@@ -3272,7 +3387,7 @@ impl Ui {
                             ui.state.borrow_mut().me = user;
                             ui.refresh_all();
                         }
-                        Err(e) => ui.toast(&format!("Could not save that: {e}")),
+                        Err(e) => ui.toast_error("Could not save that", &e),
                     },
                 );
             },
@@ -3376,7 +3491,7 @@ impl Ui {
                     async move { client.set_custom_status(&status).await },
                     move |result| match result {
                         Ok(()) => ui.reload_me(),
-                        Err(e) => ui.toast(&format!("Could not set that: {e}")),
+                        Err(e) => ui.toast_error("Could not set that", &e),
                     },
                 );
             },
@@ -3387,7 +3502,7 @@ impl Ui {
                     async move { client.clear_custom_status().await },
                     move |result| match result {
                         Ok(()) => ui.reload_me(),
-                        Err(e) => ui.toast(&format!("Could not clear that: {e}")),
+                        Err(e) => ui.toast_error("Could not clear that", &e),
                     },
                 );
             },
@@ -3476,18 +3591,20 @@ impl Ui {
                         // The server broadcasts channel_member_updated, which
                         // is what refreshes the muted styling in the sidebar.
                         Ok(()) => ui.schedule_sidebar_reload(),
-                        Err(e) => ui.toast(&format!("Could not save that: {e}")),
+                        Err(e) => ui.toast_error("Could not save that", &e),
                     },
                 );
             },
         );
     }
 
-    /// Account-wide notification settings. These live on the user object's
-    /// notify_props, not in preferences — a distinction that trips up most
-    /// third-party clients.
-    fn account_notifications(self: &Rc<Self>) {
-        let (client, me, current) = {
+    /// Ctrl+comma: the account's notifications, running in the background,
+    /// and the media cache, each applied the moment it changes.
+    ///
+    /// The notification settings live on the user object's notify_props, not
+    /// in preferences — a distinction that trips up most third-party clients.
+    fn preferences(self: &Rc<Self>) {
+        let current = {
             let st = self.state.borrow();
             let props = &st.me.notify_props;
             let desktop = props
@@ -3497,42 +3614,71 @@ impl Ui {
             let sound = props.get("desktop_sound").map(String::as_str) != Some("false");
             let keys = props.get("mention_keys").cloned().unwrap_or_default();
             let first_name = props.get("first_name").map(String::as_str) == Some("true");
-            (
-                st.client.clone(),
-                st.me.id.clone(),
-                (desktop, sound, keys, first_name),
-            )
+            (desktop, sound, keys, first_name)
         };
 
+        let dialog = adw::PreferencesDialog::new();
+        let page = adw::PreferencesPage::new();
+        dialog.add(&page);
+
         let ui = self.clone();
-        dialogs::account_notifications(
-            &self.window,
+        let toasts = dialog.downgrade();
+        page.add(&dialogs::account_notifications(
             current,
-            move |desktop, sound, keys, first_name| {
-                let patch = serde_json::json!({
-                    "notify_props": {
-                        "desktop": desktop,
-                        "desktop_sound": sound.to_string(),
-                        "mention_keys": keys,
-                        "first_name": first_name.to_string(),
-                    }
-                });
-                let client = client.clone();
-                let me = me.clone();
+            move |key, value, revert| {
+                // PATCH replaces notify_props whole, so the change goes out
+                // with every other key the account already has.
+                let (client, me, mut props) = {
+                    let st = ui.state.borrow();
+                    (
+                        st.client.clone(),
+                        st.me.id.clone(),
+                        st.me.notify_props.clone(),
+                    )
+                };
+                props.insert(key.to_string(), value);
+                let patch = serde_json::json!({ "notify_props": props });
                 let ui = ui.clone();
+                let toasts = toasts.clone();
                 runtime::spawn(
                     async move { client.patch_user(&me, &patch).await },
                     move |result| match result {
-                        Ok(user) => {
-                            // These decide every future toast, so the local
-                            // copy has to be the server's answer, not ours.
-                            ui.state.borrow_mut().me = user;
+                        // These decide every future toast, so the local copy
+                        // has to be the server's answer, not ours.
+                        Ok(user) => ui.state.borrow_mut().me = user,
+                        Err(e) => {
+                            revert();
+                            let message = format!("Could not save that: {}", human_error(&e));
+                            match toasts.upgrade() {
+                                Some(dialog) => dialog.add_toast(plain_toast(&message)),
+                                None => ui.toast(&message),
+                            }
                         }
-                        Err(e) => ui.toast(&format!("Could not save that: {e}")),
                     },
                 );
             },
-        );
+        ));
+
+        // Mirrors `app.background`, which owns the setting and its effects.
+        let background = adw::SwitchRow::builder()
+            .title("Keep running in background")
+            .subtitle("Closing the window leaves notifications and calls working")
+            .active(crate::background::Background::enabled())
+            .build();
+        background.connect_active_notify({
+            let window = self.window.clone();
+            move |row| {
+                if crate::background::Background::enabled() != row.is_active() {
+                    WidgetExt::activate_action(&window, "app.background", None).ok();
+                }
+            }
+        });
+        let app_group = adw::PreferencesGroup::builder().title("Background").build();
+        app_group.add(&background);
+        page.add(&app_group);
+
+        page.add(&storage::group(self.avatars.resources()));
+        dialog.present(Some(&self.window));
     }
 
     fn leave_channel(self: &Rc<Self>) {
@@ -3562,7 +3708,7 @@ impl Ui {
                         ui.schedule_sidebar_reload();
                         ui.refresh_messages();
                     }
-                    Err(e) => ui.toast(&format!("Could not leave: {e}")),
+                    Err(e) => ui.toast_error("Could not leave", &e),
                 },
             );
         });
@@ -3602,7 +3748,7 @@ impl Ui {
                     ui.overlay.set_show_sidebar(true);
                     ui.refresh_messages();
                 }
-                Err(e) => ui.toast(&format!("Could not load the pinned messages: {e}")),
+                Err(e) => ui.toast_error("Could not load the pinned messages", &e),
             },
         );
     }
@@ -3978,7 +4124,7 @@ impl Ui {
                         }
                         Err(e) => {
                             drop(st);
-                            ui.toast(&format!("Search failed: {e}"));
+                            ui.toast_error("Search failed", &e);
                             ui.refresh_messages();
                             return;
                         }
@@ -4019,7 +4165,7 @@ impl Ui {
                     }
                     Err(e) => {
                         ui.state.borrow_mut().searching = false;
-                        ui.toast(&format!("File search failed: {e}"));
+                        ui.toast_error("File search failed", &e);
                         ui.refresh_messages();
                     }
                 }
@@ -4067,14 +4213,14 @@ impl Ui {
             (st.client.clone(), st.me.id.clone(), st.post(&post_id))
         };
         let Some(post) = post else {
-            self.toast("That message is no longer here.");
+            self.toast("That message is no longer here");
             return;
         };
 
         match what {
             PostAction::CopyText => {
                 self.window.clipboard().set_text(&post.message);
-                self.toast("Message copied.");
+                self.toast("Message copied");
             }
             PostAction::CopyLink => {
                 let team = self
@@ -4084,11 +4230,11 @@ impl Ui {
                     .unwrap_or_else(|| "_redirect".to_string());
                 let link = format!("{}/{team}/pl/{post_id}", client.site_url());
                 self.window.clipboard().set_text(&link);
-                self.toast("Link copied.");
+                self.toast("Link copied");
             }
             PostAction::Summarise => {
                 if self.state.borrow().bots.is_empty() {
-                    self.toast("This server has no agent to ask.");
+                    self.toast("This server has no agent to ask");
                     return;
                 }
                 let ui = self.clone();
@@ -4099,7 +4245,7 @@ impl Ui {
                         Ok(target) => {
                             ui.dispatch(Action::OpenPost(target.channel_id, target.post_id))
                         }
-                        Err(e) => ui.toast(&format!("The agent could not answer: {e}")),
+                        Err(e) => ui.toast_error("The agent could not answer", &e),
                     },
                 );
             }
@@ -4120,8 +4266,8 @@ impl Ui {
                                 .await
                         },
                         move |result| match result {
-                            Ok(()) => ui.toast("You will be reminded."),
-                            Err(e) => ui.toast(&format!("Could not set that: {e}")),
+                            Ok(()) => ui.toast("You will be reminded"),
+                            Err(e) => ui.toast_error("Could not set that", &e),
                         },
                     );
                 });
@@ -4132,10 +4278,10 @@ impl Ui {
                     async move { client.post_edit_history(&post_id).await },
                     move |result| match result {
                         Ok(versions) if versions.is_empty() => {
-                            ui.toast("No earlier versions are kept for this message.")
+                            ui.toast("No earlier versions are kept for this message")
                         }
                         Ok(versions) => ui.show_history(versions),
-                        Err(e) => ui.toast(&format!("Could not load the history: {e}")),
+                        Err(e) => ui.toast_error("Could not load the history", &e),
                     },
                 );
             }
@@ -4154,7 +4300,7 @@ impl Ui {
                         // The server broadcasts the change, which is what
                         // redraws the row; only a failure needs saying.
                         if let Err(e) = result {
-                            ui.toast(&format!("Could not do that: {e}"));
+                            ui.toast_error("Could not do that", &e);
                         }
                     },
                 );
@@ -4181,7 +4327,7 @@ impl Ui {
                             Ok(post) => {
                                 ui.dispatch(Action::OpenPost(post.channel_id, String::new()))
                             }
-                            Err(e) => ui.toast(&format!("Could not forward it: {e}")),
+                            Err(e) => ui.toast_error("Could not forward it", &e),
                         },
                     );
                 });
@@ -4195,8 +4341,8 @@ impl Ui {
                     runtime::spawn(
                         async move { client.move_thread(&post_id, &channel_id).await },
                         move |result| match result {
-                            Ok(()) => ui.toast("Thread moved."),
-                            Err(e) => ui.toast(&format!("Could not move it: {e}")),
+                            Ok(()) => ui.toast("Thread moved"),
+                            Err(e) => ui.toast_error("Could not move it", &e),
                         },
                     );
                 });
@@ -4211,8 +4357,12 @@ impl Ui {
                     move |result| match result {
                         // The server echoes the change as post_edited, so
                         // there is nothing to apply here.
-                        Ok(()) => ui.toast(if pin { "Pinned." } else { "Unpinned." }),
-                        Err(e) => ui.toast(&format!("Could not change the pin: {e}")),
+                        Ok(()) => ui.toast(if pin {
+                            "Message pinned"
+                        } else {
+                            "Message unpinned"
+                        }),
+                        Err(e) => ui.toast_error("Could not change the pin", &e),
                     },
                 );
             }
@@ -4240,7 +4390,7 @@ impl Ui {
                             }
                             ui.schedule_sidebar_reload();
                         }
-                        Err(e) => ui.toast(&format!("Could not mark it unread: {e}")),
+                        Err(e) => ui.toast_error("Could not mark it unread", &e),
                     },
                 );
             }
@@ -4249,35 +4399,26 @@ impl Ui {
 
     /// Deleting is destructive and has no undo, so it asks first.
     fn confirm_delete(self: &Rc<Self>, post_id: String) {
-        let dialog = adw::MessageDialog::new(
-            Some(&self.window),
-            Some("Delete this message?"),
-            Some("It will be removed for everyone. This cannot be undone."),
-        );
-        dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
-        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
-        dialog.set_default_response(Some("cancel"));
-        dialog.set_close_response("cancel");
-
         let ui = self.clone();
-        dialog.connect_response(None, move |dialog, response| {
-            dialog.close();
-            if response != "delete" {
-                return;
-            }
-            let client = ui.state.borrow().client.clone();
-            let post_id = post_id.clone();
-            let ui = ui.clone();
-            runtime::spawn(
-                async move { client.delete_post(&post_id).await },
-                move |result| {
-                    if let Err(e) = result {
-                        ui.toast(&format!("Could not delete it: {e}"));
-                    }
-                },
-            );
-        });
-        dialog.present();
+        dialogs::confirm(
+            &self.window,
+            "Delete Message?",
+            "It will be removed for everyone and cannot be restored.",
+            "Delete",
+            move || {
+                let client = ui.state.borrow().client.clone();
+                let post_id = post_id.clone();
+                let ui = ui.clone();
+                runtime::spawn(
+                    async move { client.delete_post(&post_id).await },
+                    move |result| {
+                        if let Err(e) = result {
+                            ui.toast_error("Could not delete it", &e);
+                        }
+                    },
+                );
+            },
+        );
     }
 
     /// Saving a post is a preference, not a post field, so it is written and
@@ -4321,7 +4462,7 @@ impl Ui {
                     }
                     drop(st);
                     ui.refresh_messages();
-                    ui.toast(&format!("Could not change that: {e}"));
+                    ui.toast_error("Could not change that", &e);
                 }
             },
         );
@@ -4345,7 +4486,7 @@ impl Ui {
             async move { client.follow_thread(&team_id, &root_id, following).await },
             move |result| match result {
                 Ok(()) => ui.load_inbox(),
-                Err(e) => ui.toast(&format!("Could not change that: {e}")),
+                Err(e) => ui.toast_error("Could not change that", &e),
             },
         );
     }
@@ -4414,7 +4555,7 @@ impl Ui {
                                 ui.toast(error);
                             }
                         }
-                        Err(e) => ui.toast(&format!("That form was not accepted: {e}")),
+                        Err(e) => ui.toast_error("That form was not accepted", &e),
                     },
                 );
             },
@@ -4469,7 +4610,7 @@ impl Ui {
                         );
                     }
                 }
-                Err(e) => ui.toast(&format!("That command failed: {e}")),
+                Err(e) => ui.toast_error("That command failed", &e),
             },
         );
     }
@@ -4500,7 +4641,7 @@ impl Ui {
                     ui.state.borrow_mut().apply_post(post);
                     ui.jump_to_post(channel_id, post_id);
                 }
-                Err(e) => ui.toast(&format!("Could not open that message: {e}")),
+                Err(e) => ui.toast_error("Could not open that message", &e),
             },
         );
     }
@@ -4541,7 +4682,7 @@ impl Ui {
                 },
                 move |result| {
                     let Ok((channel_id, before, after, target, authors, statuses)) = result else {
-                        ui.toast("That message could not be loaded.");
+                        ui.toast("That message could not be loaded");
                         return;
                     };
                     let post_id = target.id.clone();
@@ -5278,7 +5419,7 @@ impl Ui {
                         ui.state.borrow_mut().users.insert(id.clone(), user);
                         ui.show_profile(&id, &anchor);
                     }
-                    Err(_) => ui.toast("That person could not be looked up."),
+                    Err(_) => ui.toast("That person could not be looked up"),
                 },
             );
             return;
@@ -5373,7 +5514,7 @@ impl Ui {
                     },
                     move |result| {
                         if let Err(e) = result {
-                            ui.toast(&format!("Could not react: {e}"));
+                            ui.toast_error("Could not react", &e);
                         }
                     },
                 );
@@ -5459,7 +5600,7 @@ impl Ui {
                         ui.dispatch(Action::SelectChannel(id));
                     }
                 }
-                Err(e) => ui.toast(&format!("Could not load that team: {e}")),
+                Err(e) => ui.toast_error("Could not load that team", &e),
             },
         );
     }
@@ -5610,7 +5751,7 @@ impl Ui {
                         Err(e) => {
                             ui.chat.set_loading(false);
                             ui.refresh_messages();
-                            ui.toast(&format!("Could not load messages: {e}"));
+                            ui.toast_error("Could not load messages", &e);
                         }
                     }
                 },
@@ -5655,6 +5796,9 @@ impl Ui {
             async move { client.view_channel(&id, "", crt).await },
             |_| {},
         );
+        if let Some(app) = self.window.application() {
+            notify::withdraw(&app, &channel_id);
+        }
 
         {
             let mut st = self.state.borrow_mut();
@@ -5691,7 +5835,7 @@ impl Ui {
                     ui.channels.refresh(&ui.state, &ui.avatars);
                     ui.dispatch(Action::SelectChannel(id));
                 }
-                Err(e) => ui.toast(&format!("Could not open that conversation: {e}")),
+                Err(e) => ui.toast_error("Could not open that conversation", &e),
             },
         );
     }
@@ -5802,7 +5946,7 @@ impl Ui {
                     }
                 }
                 Err(e) => {
-                    ui.toast(&format!("Could not load the thread: {e}"));
+                    ui.toast_error("Could not load the thread", &e);
                     // Stop the panel claiming it is still loading. Whatever we
                     // hold of the root is better than a spinner that never
                     // resolves.
@@ -6020,7 +6164,7 @@ impl Ui {
                     ui.refresh_messages();
                 }
                 Err(e) => {
-                    ui.toast(&format!("Message not sent: {e}"));
+                    ui.toast_error("Message not sent", &e);
                     // Take the optimistic copy back down: leaving it there
                     // would claim the message was sent.
                     ui.state.borrow_mut().remove_post(&placeholder_id);
@@ -6071,7 +6215,7 @@ impl Ui {
             },
             move |result| {
                 if let Err(e) = result {
-                    ui.toast(&format!("Reaction failed: {e}"));
+                    ui.toast_error("Reaction failed", &e);
                     // Put it back the way it was.
                     ui.state
                         .borrow_mut()
@@ -6101,7 +6245,7 @@ impl Ui {
         };
         let (Some(discovery), Some(ws)) = (st.calls.clone(), st.ws.clone()) else {
             drop(st);
-            self.toast("Calls are not enabled on this server.");
+            self.toast("Calls are not enabled on this server");
             return;
         };
         let client = st.client.clone();
@@ -6124,7 +6268,7 @@ impl Ui {
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "could not join the call");
-                    ui.toast(&format!("Could not join the call: {e}"))
+                    ui.toast_error("Could not join the call", &e)
                 }
             },
         );
@@ -6219,13 +6363,13 @@ impl Ui {
                             call.audio.set_track(track);
                         }
                     }
-                    Err(e) => ui.toast(&format!("Could not unmute: {e}")),
+                    Err(e) => ui.toast_error("Could not unmute", &e),
                 },
             );
         } else {
             runtime::spawn(async move { session.mute().await }, move |result| {
                 if let Err(e) = result {
-                    ui.toast(&format!("Could not mute: {e}"));
+                    ui.toast_error("Could not mute", &e);
                 }
             });
         }
@@ -6247,7 +6391,7 @@ impl Ui {
                 if let Err(e) = result {
                     // Only the host may record, and only when the server
                     // allows it at all; both come back as a plain refusal.
-                    ui.toast(&format!("Could not change the recording: {e}"));
+                    ui.toast_error("Could not change the recording", &e);
                 }
             },
         );
@@ -6475,7 +6619,7 @@ impl Ui {
                 let muted = self.state.borrow().call.as_ref().is_some_and(|c| c.muted);
                 if !muted {
                     self.toggle_mute();
-                    self.toast("The host muted you.");
+                    self.toast("The host muted you");
                 }
             }
             CallUpdate::Participant(mattermost_calls::CallsEvent::HostScreenOffRequest {
@@ -6489,7 +6633,7 @@ impl Ui {
                     .is_some_and(|c| c.screen.is_some())
                 {
                     self.toggle_screen();
-                    self.toast("The host stopped your screen share.");
+                    self.toast("The host stopped your screen share");
                 }
             }
             CallUpdate::Participant(mattermost_calls::CallsEvent::HostLowerHandRequest {
@@ -6503,11 +6647,11 @@ impl Ui {
                 };
                 if raised {
                     self.toggle_hand();
-                    self.toast("The host lowered your hand.");
+                    self.toast("The host lowered your hand");
                 }
             }
             CallUpdate::Participant(mattermost_calls::CallsEvent::HostRemoved { .. }) => {
-                self.toast("The host removed you from the call.");
+                self.toast("The host removed you from the call");
                 self.toggle_call();
             }
             CallUpdate::Participant(mattermost_calls::CallsEvent::HostChanged {
@@ -6635,7 +6779,7 @@ impl Ui {
                 self.close_videos();
                 self.state.borrow_mut().call = None;
                 self.refresh_call_ui();
-                self.toast("The call ended.");
+                self.toast("The call ended");
             }
             CallUpdate::Error(e) => self.toast(&format!("Call error: {e}")),
             _ => {}
@@ -6684,6 +6828,8 @@ impl Ui {
         let mut refetch_post: Option<String> = None;
         let mut forget_avatar: Option<String> = None;
         let mut notify_about: Option<mattermost_api::ws::Posted> = None;
+        // Channels read on another device, whose notifications are stale now.
+        let mut read_elsewhere: Vec<String> = Vec::new();
         // Reading a message as it lands is not something to be told about, but
         // only while the window is actually in front of the person.
         let focused_channel = self
@@ -6861,6 +7007,7 @@ impl Ui {
                 }
                 Event::ChannelsViewed { channel_times } => {
                     // Another session read something; mirror it.
+                    read_elsewhere.extend(channel_times.keys().cloned());
                     for (channel_id, at) in channel_times {
                         let totals = st
                             .channels
@@ -6936,7 +7083,13 @@ impl Ui {
                     &posted.post.channel_id,
                     title.trim_start_matches(" — "),
                     &notify::body(&posted),
+                    self.notification_sound(),
                 );
+            }
+        }
+        if let Some(app) = self.window.application() {
+            for channel_id in &read_elsewhere {
+                notify::withdraw(&app, channel_id);
             }
         }
         if reload_teams {
@@ -7151,6 +7304,8 @@ async fn hydrate_authors(
 fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
     let client = ui.state.borrow().client.clone();
     let pointer = crate::cache::load(client.site_url());
+    // Whether last time's picture will be on screen if the server is not.
+    let had_cache = pointer.is_some();
 
     // Where the reader was sitting in each channel, put back before anything
     // can open one. Both the store load below and the first `select_channel`
@@ -7299,7 +7454,7 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                             crate::cache::clear();
                             fallback();
                         }
-                        _ => ui.toast(&format!("Could not load your account: {e}")),
+                        _ => ui.show_load_failure(&e, had_cache),
                     }
                     return;
                 }
@@ -7409,7 +7564,7 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                             ui.chat.set_connection_problem(Some(&if will_retry {
                                 "Reconnecting…".to_string()
                             } else {
-                                format!("Disconnected: {reason}")
+                                format!("Disconnected: {}", glib::markup_escape_text(&reason))
                             }));
                         }
                         _ => {}

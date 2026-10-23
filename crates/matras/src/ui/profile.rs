@@ -70,7 +70,11 @@ pub fn popover(
         .halign(gtk::Align::Center)
         .margin_top(8)
         .build();
-    let dot = gtk::Label::new(Some("●"));
+    // The word beside it is what a screen reader should say; the dot is paint.
+    let dot = gtk::Label::builder()
+        .label("●")
+        .accessible_role(gtk::AccessibleRole::Presentation)
+        .build();
     dot.add_css_class(presence_class(presence));
     dot.add_css_class("presence-dot");
     presence_row.append(&dot);
@@ -126,17 +130,17 @@ pub fn popover(
     }
 
     if let Some(local) = local_time(&user) {
-        let row = detail_row("Local time", &local);
+        let row = detail_row("Local time", &local, false);
         row.set_margin_top(12);
         column.append(&row);
     }
     if !user.email.is_empty() {
-        column.append(&detail_row("Email", &user.email));
+        column.append(&detail_row("Email", &user.email, true));
     }
 
     if !is_me {
         let message = gtk::Button::builder()
-            .label("Send message")
+            .label("Send Message")
             .margin_top(14)
             .build();
         message.add_css_class("suggested-action");
@@ -168,7 +172,7 @@ pub fn popover(
     Some(popover)
 }
 
-fn detail_row(label: &str, value: &str) -> gtk::Box {
+fn detail_row(label: &str, value: &str, selectable: bool) -> gtk::Box {
     let row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
@@ -181,6 +185,7 @@ fn detail_row(label: &str, value: &str) -> gtk::Box {
         .xalign(1.0)
         .hexpand(true)
         .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .selectable(selectable)
         .build();
     val.add_css_class("caption");
     row.append(&key);

@@ -13,3 +13,9 @@ Keywords=Matras;Mattermost;chat;team;messaging;
 # desktop token starts with "dev-".
 MimeType=x-scheme-handler/mattermost-dev;
 StartupNotify=true
+X-GNOME-UsesNotifications=true
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=matras --new-window

@@ -56,6 +56,67 @@ pub(super) fn install_window_close_shortcut(
     window.add_action(&action);
 }
 
+/// The Keyboard Shortcuts window. Items name their action, so GTK shows the
+/// accelerator actually registered for it and the list cannot drift from it;
+/// the composer's keys are handled by a key controller, not an action, so
+/// those two spell their keys out.
+const HELP_OVERLAY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkShortcutsWindow" id="help_overlay">
+    <property name="modal">True</property>
+    <child>
+      <object class="GtkShortcutsSection">
+        <property name="section-name">shortcuts</property>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">General</property>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Preferences</property><property name="action-name">win.preferences</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Keyboard Shortcuts</property><property name="action-name">win.show-help-overlay</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Close Window</property><property name="action-name">win.close</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Quit</property><property name="action-name">app.quit</property></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">Navigation</property>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Jump to a Channel or Person</property><property name="action-name">win.quick-switch</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Search Messages</property><property name="action-name">win.search</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Mentions and Threads</property><property name="action-name">win.inbox</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Next Unread Channel</property><property name="action-name">win.next-unread</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Previous Unread Channel</property><property name="action-name">win.previous-unread</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Close Panel or Go Back</property><property name="action-name">win.close-panel</property></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">Channels</property>
+            <child><object class="GtkShortcutsShortcut"><property name="title">New Channel</property><property name="action-name">win.new-channel</property></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">Composer</property>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Send Message</property><property name="accelerator">Return</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">New Line</property><property name="accelerator">&lt;Shift&gt;Return</property></object></child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>"#;
+
+/// Gives `window` its Keyboard Shortcuts window. GTK adds the
+/// `win.show-help-overlay` action; its Ctrl+? is ours to bind, because GTK
+/// only does that for an overlay loaded from the app's resources.
+pub(super) fn install_help_overlay(app: &adw::Application, window: &adw::ApplicationWindow) {
+    let builder = gtk::Builder::from_string(HELP_OVERLAY);
+    let overlay: gtk::ShortcutsWindow = builder
+        .object("help_overlay")
+        .expect("the shortcuts window is in its own UI string");
+    window.set_help_overlay(Some(&overlay));
+    app.set_accels_for_action("win.show-help-overlay", &["<Control>question"]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

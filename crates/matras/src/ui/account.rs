@@ -5,6 +5,7 @@
 //! [`crate::state`] — each function takes callbacks and hands back what the
 //! user chose, so the API calls stay in [`super`] with the client.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -35,7 +36,7 @@ const DURATIONS: [&str; 6] = [
 /// Edit your own profile. `current` is (first_name, last_name, nickname, position).
 /// `on_save` gets the same four. `on_avatar` gets a chosen image file.
 pub fn edit_profile(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     current: (String, String, String, String),
     avatar: Option<gtk::gdk::Texture>,
     on_save: impl Fn(String, String, String, String) + 'static,
@@ -54,7 +55,7 @@ pub fn edit_profile(
     }
 
     let change = gtk::Button::builder()
-        .label("Change picture…")
+        .label("Change Picture…")
         .halign(gtk::Align::Center)
         .margin_top(12)
         .build();
@@ -85,52 +86,22 @@ pub fn edit_profile(
 
     let column = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(12)
-        .margin_end(12)
+        .margin_top(12)
         .build();
     column.append(&picture);
     column.append(&change);
     column.append(&group);
 
-    let cancel = gtk::Button::with_label("Cancel");
-    let save = gtk::Button::with_label("Save");
-    save.add_css_class("suggested-action");
-
-    let header = adw::HeaderBar::builder()
-        .title_widget(&adw::WindowTitle::new("Edit profile", ""))
-        .show_end_title_buttons(false)
-        .show_start_title_buttons(false)
-        .build();
-    header.pack_start(&cancel);
-    header.pack_end(&save);
-
-    let view = adw::ToolbarView::new();
-    view.add_top_bar(&header);
-    view.set_content(Some(
-        &adw::Clamp::builder()
-            .maximum_size(460)
-            .child(&column)
-            .build(),
-    ));
-
-    let window = adw::Window::builder()
-        .title("Edit profile")
-        .default_width(420)
-        .modal(true)
-        .build();
-    window.set_transient_for(Some(parent));
-    window.set_content(Some(&view));
+    let (dialog, save) = super::dialogs::form("Edit Profile", "Save", &column);
 
     // The picker can be opened again after a mis-click, so the callback is
     // shared rather than moved into the first click.
     let on_avatar = Rc::new(on_avatar);
     change.connect_clicked({
-        let window = window.clone();
         let picture = picture.clone();
         let on_avatar = on_avatar.clone();
-        move |_| {
+        move |button| {
+            let window = button.root().and_downcast::<gtk::Window>();
             let filter = gtk::FileFilter::new();
             filter.set_name(Some("Images"));
             for mime in ["image/png", "image/jpeg", "image/webp"] {
@@ -140,12 +111,12 @@ pub fn edit_profile(
             filters.append(&filter);
 
             let chooser = gtk::FileDialog::builder()
-                .title("Choose a picture")
+                .title("Choose a Picture")
                 .modal(true)
                 .filters(&filters)
                 .default_filter(&filter)
                 .build();
-            chooser.open(Some(&window), gtk::gio::Cancellable::NONE, {
+            chooser.open(window.as_ref(), gtk::gio::Cancellable::NONE, {
                 let picture = picture.clone();
                 let on_avatar = on_avatar.clone();
                 move |result| {
@@ -165,14 +136,11 @@ pub fn edit_profile(
         }
     });
 
-    cancel.connect_clicked({
-        let window = window.clone();
-        move |_| window.close()
-    });
     save.connect_clicked({
-        let window = window.clone();
+        let dialog = dialog.clone();
+        let first = first.clone();
         move |_| {
-            window.close();
+            dialog.close();
             on_save(
                 first.text().trim().to_string(),
                 last.text().trim().to_string(),
@@ -182,14 +150,15 @@ pub fn edit_profile(
         }
     });
 
-    window.present();
+    dialog.present(Some(parent));
+    first.grab_focus();
 }
 
 /// Set a custom status. `current` is (emoji_shortcode, text).
 /// `on_set` gets (emoji, text, expires_at_unix_millis or 0 for never).
 /// `on_clear` clears it.
 pub fn custom_status(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     current: (String, String),
     recents: Vec<(String, String)>,
     on_set: impl Fn(String, String, i64) + 'static,
@@ -277,41 +246,64 @@ pub fn custom_status(
     }
     content.append(&suggestions);
 
-    let dialog = adw::MessageDialog::new(Some(parent), Some("Set a status"), None);
-    dialog.set_extra_child(Some(&content));
-    dialog.add_responses(&[("cancel", "Cancel"), ("set", "Set status")]);
-    // Nothing to clear until there is a status, so the button is not offered.
-    if is_set {
-        dialog.add_response("clear", "Clear status");
-        dialog.set_response_appearance("clear", adw::ResponseAppearance::Destructive);
-    }
-    dialog.set_response_appearance("set", adw::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("set"));
-    dialog.set_close_response("cancel");
+    let (dialog, set) = super::dialogs::form("Set a Status", "Set", &content);
 
-    dialog.connect_response(None, move |dialog, response| {
-        dialog.close();
-        match response {
-            "clear" => on_clear(),
-            "set" => {
-                let base = glib::DateTime::now_local().ok();
-                let expires = base.map_or(0, |now| expires_at(&now, duration.selected()));
-                on_set(
-                    emoji.text().trim().trim_matches(':').to_string(),
-                    text.text().trim().to_string(),
-                    expires,
-                );
+    // Nothing to clear until there is a status, so the button is not offered.
+    // Clearing is no loss — the status is retyped in a second, and it is in
+    // Recent anyway — so it is an ordinary button, not a destructive one.
+    if is_set {
+        let clear = gtk::Button::builder()
+            .label("Clear Status")
+            .halign(gtk::Align::Center)
+            .margin_top(12)
+            .build();
+        clear.add_css_class("pill");
+        clear.connect_clicked({
+            let dialog = dialog.clone();
+            move |_| {
+                dialog.close();
+                on_clear();
             }
-            _ => {}
+        });
+        content.append(&clear);
+    }
+
+    // A status is an emoji, some words, or both; neither is nothing to set.
+    let refresh = {
+        let set = set.clone();
+        let emoji = emoji.clone();
+        let text = text.clone();
+        move || set.set_sensitive(!emoji.text().trim().is_empty() || !text.text().trim().is_empty())
+    };
+    refresh();
+    emoji.connect_changed({
+        let refresh = refresh.clone();
+        move |_| refresh()
+    });
+    text.connect_changed(move |_| refresh());
+
+    set.connect_clicked({
+        let dialog = dialog.clone();
+        let emoji = emoji.clone();
+        move |_| {
+            dialog.close();
+            let base = glib::DateTime::now_local().ok();
+            let expires = base.map_or(0, |now| expires_at(&now, duration.selected()));
+            on_set(
+                emoji.text().trim().trim_matches(':').to_string(),
+                text.text().trim().to_string(),
+                expires,
+            );
         }
     });
-    dialog.present();
+    dialog.present(Some(parent));
+    emoji.grab_focus();
 }
 
 /// Pick a server to sign in to, or add another. `servers` is (url, label).
 /// `on_pick` selects an existing one; `on_add` starts a new sign-in.
 pub fn choose_server(
-    parent: &impl IsA<gtk::Window>,
+    parent: &impl IsA<gtk::Widget>,
     servers: Vec<(String, String)>,
     on_pick: impl Fn(String) + 'static,
     on_add: impl Fn() + 'static,
@@ -322,15 +314,21 @@ pub fn choose_server(
         .build();
     list.add_css_class("boxed-list");
 
-    let window = adw::Window::builder()
-        .title("Choose a server")
-        .default_width(420)
-        .default_height(420)
-        .modal(true)
-        .build();
-    window.set_transient_for(Some(parent));
+    let dialog = super::dialogs::list_dialog("Choose a Server", None, &list);
+    dialog.set_content_height(420);
 
-    let on_pick = Rc::new(on_pick);
+    // Every way out goes through `closed`, so dismissing the dialog (Escape,
+    // the close button, a swipe on a phone) still lands somewhere: without a
+    // server picked, that is the sign-in form, not a spinner forever.
+    let picked: Rc<RefCell<Option<String>>> = Rc::default();
+    dialog.connect_closed({
+        let picked = picked.clone();
+        move |_| match picked.borrow_mut().take() {
+            Some(url) => on_pick(url),
+            None => on_add(),
+        }
+    });
+
     for (url, label) in servers {
         // AdwActionRow reads its title as Pango markup, and both of these are
         // free text the user typed at sign-in.
@@ -340,11 +338,13 @@ pub fn choose_server(
             .activatable(true)
             .build();
         row.connect_activated({
-            let on_pick = on_pick.clone();
-            let window = window.clone();
+            let picked = picked.clone();
+            let dialog = dialog.downgrade();
             move |_| {
-                window.close();
-                on_pick(url.clone());
+                *picked.borrow_mut() = Some(url.clone());
+                if let Some(dialog) = dialog.upgrade() {
+                    dialog.close();
+                }
             }
         });
         list.append(&row);
@@ -356,34 +356,16 @@ pub fn choose_server(
         .build();
     add.add_prefix(&gtk::Image::from_icon_name("list-add-symbolic"));
     add.connect_activated({
-        let window = window.clone();
+        let dialog = dialog.downgrade();
         move |_| {
-            window.close();
-            on_add();
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
+            }
         }
     });
     list.append(&add);
 
-    let scroller = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vexpand(true)
-        .child(
-            &adw::Clamp::builder()
-                .maximum_size(460)
-                .margin_top(12)
-                .margin_bottom(12)
-                .margin_start(12)
-                .margin_end(12)
-                .child(&list)
-                .build(),
-        )
-        .build();
-
-    let view = adw::ToolbarView::new();
-    view.add_top_bar(&adw::HeaderBar::new());
-    view.set_content(Some(&scroller));
-    window.set_content(Some(&view));
-    window.present();
+    dialog.present(Some(parent));
 }
 
 /// When the status picked at `base` should expire, in Unix milliseconds.
