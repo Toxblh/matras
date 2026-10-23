@@ -90,8 +90,18 @@ pub fn should_notify(
 ///
 /// The id is the channel, so a second message in the same conversation
 /// replaces the first rather than stacking — a busy channel should not bury
-/// the rest of the desktop.
-pub fn show(app: &gtk::Application, channel_id: &str, title: &str, body: &str) {
+/// the rest of the desktop; [`withdraw`] takes it back once it is read.
+///
+/// While one of our windows is the active one the person is already looking
+/// at the app, so a banner on top of it is noise: only the sound plays (when
+/// `sound` is on, which is the account's "Notification sound").
+pub fn show(app: &gtk::Application, channel_id: &str, title: &str, body: &str, sound: bool) {
+    if app.windows().iter().any(|window| window.is_active()) {
+        if sound {
+            play_sound();
+        }
+        return;
+    }
     let notification = gtk::gio::Notification::new(title);
     notification.set_body(Some(body));
     notification.set_priority(gtk::gio::NotificationPriority::Normal);
@@ -100,9 +110,66 @@ pub fn show(app: &gtk::Application, channel_id: &str, title: &str, body: &str) {
     app.send_notification(Some(channel_id), &notification);
 }
 
-/// The line under the title: who said it, or what they said.
+/// Takes back the channel's notification: it has been read, here or on
+/// another device, so it is no longer news.
+pub fn withdraw(app: &gtk::Application, channel_id: &str) {
+    app.withdraw_notification(channel_id);
+}
+
+/// The message sound the desktop would have played with the notification.
+fn play_sound() {
+    const SOUND: &str = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga";
+    thread_local! {
+        // Held until the next one: a media file nobody holds stops playing.
+        static PLAYING: std::cell::RefCell<Option<gtk::MediaFile>> = const { std::cell::RefCell::new(None) };
+    }
+    if !std::path::Path::new(SOUND).exists() {
+        // No sound theme (a bare Flatpak runtime, Android): the bell at least.
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.beep();
+        }
+        return;
+    }
+    let media = gtk::MediaFile::for_filename(SOUND);
+    media.play();
+    PLAYING.with_borrow_mut(|playing| *playing = Some(media));
+}
+
+/// A message's Markdown reduced to its text: rendered to Pango markup the way
+/// the feed does, then stripped of the markup.
+fn plain_text(message: &str) -> String {
+    crate::markdown::parse(message)
+        .into_iter()
+        .map(|block| match block {
+            crate::markdown::Block::Text(markup) => {
+                // Every `<` left in the markup opens a tag (text is escaped),
+                // and `<a>` is GtkLabel's, which Pango's parser refuses — so
+                // the tags go by hand and Pango only unescapes what is left.
+                let mut bare = String::with_capacity(markup.len());
+                let mut in_tag = false;
+                for ch in markup.chars() {
+                    match ch {
+                        '<' => in_tag = true,
+                        '>' if in_tag => in_tag = false,
+                        _ if !in_tag => bare.push(ch),
+                        _ => {}
+                    }
+                }
+                gtk::pango::parse_markup(&bare, '\0')
+                    .map(|(_, text, _)| text.to_string())
+                    .unwrap_or(bare)
+            }
+            crate::markdown::Block::Code { text, .. } => text,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The line under the title: who said it, or what they said — as plain text,
+/// because a notification shows `**this**` literally.
 pub fn body(posted: &Posted) -> String {
-    let text = posted.post.message.trim();
+    let plain = plain_text(&posted.post.message);
+    let text = plain.trim();
     if text.is_empty() {
         return if posted.post.file_ids.is_empty() {
             "Sent a message".to_string()
@@ -237,6 +304,13 @@ mod tests {
             Some(&muted),
             None
         ));
+    }
+
+    #[test]
+    fn the_body_is_text_without_markdown() {
+        let mut post = posted("them", "O", &[]);
+        post.post.message = "**Deploy** is _done_ & `green`, see [logs](https://x)".into();
+        assert_eq!(body(&post), "Deploy is done &  green , see logs");
     }
 
     #[test]

@@ -1404,6 +1404,17 @@ impl Ui {
         self.toasts.add_toast(plain_toast(message));
     }
 
+    /// The account's "Notification sound" switch; on unless turned off.
+    fn notification_sound(&self) -> bool {
+        self.state
+            .borrow()
+            .me
+            .notify_props
+            .get("desktop_sound")
+            .map(String::as_str)
+            != Some("false")
+    }
+
     /// A failure, in words rather than as the error's own debug text.
     fn toast_error(&self, what: &str, error: &(dyn std::error::Error + 'static)) {
         self.toast(&format!("{what}: {}", human_error(error)));
@@ -2008,7 +2019,7 @@ impl Ui {
                     text => text.to_string(),
                 };
                 if let Some(app) = self.window.application() {
-                    notify::show(&app, &channel_id, &title, &body);
+                    notify::show(&app, &channel_id, &title, &body, self.notification_sound());
                 }
             }
             // Authoritative count, so it replaces ours rather than adjusting it.
@@ -5731,6 +5742,9 @@ impl Ui {
             async move { client.view_channel(&id, "", crt).await },
             |_| {},
         );
+        if let Some(app) = self.window.application() {
+            notify::withdraw(&app, &channel_id);
+        }
 
         {
             let mut st = self.state.borrow_mut();
@@ -6760,6 +6774,8 @@ impl Ui {
         let mut refetch_post: Option<String> = None;
         let mut forget_avatar: Option<String> = None;
         let mut notify_about: Option<mattermost_api::ws::Posted> = None;
+        // Channels read on another device, whose notifications are stale now.
+        let mut read_elsewhere: Vec<String> = Vec::new();
         // Reading a message as it lands is not something to be told about, but
         // only while the window is actually in front of the person.
         let focused_channel = self
@@ -6935,6 +6951,7 @@ impl Ui {
                 }
                 Event::ChannelsViewed { channel_times } => {
                     // Another session read something; mirror it.
+                    read_elsewhere.extend(channel_times.keys().cloned());
                     for (channel_id, at) in channel_times {
                         let totals = st
                             .channels
@@ -7010,7 +7027,13 @@ impl Ui {
                     &posted.post.channel_id,
                     title.trim_start_matches(" — "),
                     &notify::body(&posted),
+                    self.notification_sound(),
                 );
+            }
+        }
+        if let Some(app) = self.window.application() {
+            for channel_id in &read_elsewhere {
+                notify::withdraw(&app, channel_id);
             }
         }
         if reload_teams {
