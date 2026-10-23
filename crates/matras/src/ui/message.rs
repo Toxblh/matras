@@ -1101,7 +1101,7 @@ fn save_attachment(
     anchor: &gtk::Button,
 ) {
     let dialog = gtk::FileDialog::builder()
-        .title("Save attachment")
+        .title("Save Attachment")
         .initial_name(&file.name)
         .build();
     let parent = anchor.root().and_downcast::<adw::ApplicationWindow>();
@@ -1560,7 +1560,7 @@ fn hover_actions(
 
     let react = gtk::MenuButton::builder()
         .icon_name("face-smile-symbolic")
-        .tooltip_text("Add reaction")
+        .tooltip_text("Add Reaction")
         .build();
     react.add_css_class("flat");
     react.add_css_class("circular");
@@ -1587,7 +1587,7 @@ fn hover_actions(
         } else {
             "non-starred-symbolic"
         })
-        .tooltip_text(if saved { "Remove from saved" } else { "Save" })
+        .tooltip_text(if saved { "Remove From Saved" } else { "Save" })
         .build();
     save.add_css_class("flat");
     save.add_css_class("circular");
@@ -1610,7 +1610,7 @@ fn hover_actions(
     if allow_thread {
         let reply = gtk::Button::builder()
             .icon_name("mail-reply-sender-symbolic")
-            .tooltip_text("Reply in thread")
+            .tooltip_text("Reply in Thread")
             .build();
         reply.add_css_class("flat");
         reply.add_css_class("circular");
@@ -1632,7 +1632,7 @@ fn hover_actions(
 fn overflow_menu(post: &Post, actions: &MessageActions, mine: bool) -> gtk::Widget {
     let button = gtk::MenuButton::builder()
         .icon_name("view-more-symbolic")
-        .tooltip_text("More actions")
+        .tooltip_text("More Actions")
         .build();
     button.add_css_class("flat");
     button.add_css_class("circular");
@@ -1665,28 +1665,28 @@ fn post_menu(
     let group = gtk::gio::SimpleActionGroup::new();
 
     let mut entries: Vec<(&str, &str, PostAction)> = vec![
-        ("Copy text", "copy-text", PostAction::CopyText),
-        ("Copy link", "copy-link", PostAction::CopyLink),
-        ("Mark as unread", "mark-unread", PostAction::MarkUnread),
+        ("Copy Text", "copy-text", PostAction::CopyText),
+        ("Copy Link", "copy-link", PostAction::CopyLink),
+        ("Mark as Unread", "mark-unread", PostAction::MarkUnread),
         ("Forward…", "forward", PostAction::Forward),
-        ("Remind me about this…", "remind", PostAction::Remind),
+        ("Remind Me About This…", "remind", PostAction::Remind),
     ];
     if post.is_pinned {
-        entries.push(("Unpin from channel", "unpin", PostAction::Unpin));
+        entries.push(("Unpin From Channel", "unpin", PostAction::Unpin));
     } else {
-        entries.push(("Pin to channel", "pin", PostAction::Pin));
+        entries.push(("Pin to Channel", "pin", PostAction::Pin));
     }
     // Only worth offering where there is a history to see.
     if post.is_edited() {
-        entries.push(("Edit history", "history", PostAction::History));
+        entries.push(("Edit History", "history", PostAction::History));
     }
     if post.reply_count > 0 {
-        entries.push(("Summarise thread", "summarise", PostAction::Summarise));
-        entries.push(("Move thread…", "move", PostAction::MoveThread));
+        entries.push(("Summarise Thread", "summarise", PostAction::Summarise));
+        entries.push(("Move Thread…", "move", PostAction::MoveThread));
     }
     if mine {
         entries.push(("Edit", "edit", PostAction::Edit));
-        entries.push(("Delete", "delete", PostAction::Delete));
+        entries.push(("Delete…", "delete", PostAction::Delete));
     }
 
     for (label, name, action) in entries {
@@ -2402,7 +2402,7 @@ const THREAD_FACES: usize = 5;
 /// The "new messages" landmark: a rule with a label, drawn where reading
 /// stopped.
 pub fn unread_line() -> gtk::Widget {
-    let label = gtk::Label::new(Some("New messages"));
+    let label = gtk::Label::new(Some("New Messages"));
     label.add_css_class("unread-line-label");
 
     let row = gtk::Box::builder()

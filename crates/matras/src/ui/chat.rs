@@ -230,8 +230,8 @@ fn render_item(item: &FeedItem, context: &RenderContext) -> gtk::Widget {
         FeedItem::Start(title) => start_label(title),
         FeedItem::Empty => adw::StatusPage::builder()
             .icon_name("chat-message-new-symbolic")
-            .title("No messages yet")
-            .description("Say something to get started.")
+            .title("No Messages Yet")
+            .description("Say something to get started")
             .vexpand(true)
             .build()
             .upcast(),
@@ -306,7 +306,7 @@ impl ChatView {
 
         let call_button = gtk::Button::builder()
             .icon_name("call-start-symbolic")
-            .tooltip_text("Start or join a call")
+            .tooltip_text("Start or Join Call")
             .sensitive(false)
             .build();
         call_button.add_css_class("flat");
@@ -330,7 +330,7 @@ impl ChatView {
         inbox_content.append(&inbox_badge);
         let inbox_button = gtk::Button::builder()
             .child(&inbox_content)
-            .tooltip_text("Mentions and threads")
+            .tooltip_text("Mentions and Threads")
             .build();
         inbox_button.add_css_class("flat");
         inbox_button.set_visible(false);
@@ -360,11 +360,13 @@ impl ChatView {
         channel_menu.append(Some("Bookmarks…"), Some("win.channel-bookmarks"));
         channel_menu.append(Some("Pinned Messages"), Some("win.pinned-posts"));
         channel_menu.append(Some("Notifications…"), Some("win.channel-notifications"));
-        channel_menu.append(Some("Leave Channel"), Some("win.leave-channel"));
-        channel_menu.append(Some("Archive Channel"), Some("win.archive-channel"));
+        let danger = gtk::gio::Menu::new();
+        danger.append(Some("Leave Channel…"), Some("win.leave-channel"));
+        danger.append(Some("Archive Channel…"), Some("win.archive-channel"));
+        channel_menu.append_section(None, &danger);
         let channel_button = gtk::MenuButton::builder()
             .icon_name("view-more-symbolic")
-            .tooltip_text("Channel menu")
+            .tooltip_text("Channel Menu")
             .menu_model(&channel_menu)
             .build();
         channel_button.add_css_class("flat");
@@ -632,7 +634,7 @@ impl ChatView {
 
         let send = gtk::Button::builder()
             .icon_name(COMPOSER_SEND_ICON)
-            .tooltip_text("Send  (Enter)")
+            .tooltip_text("Send")
             .valign(gtk::Align::End)
             .build();
         send.add_css_class("suggested-action");
@@ -857,8 +859,8 @@ impl ChatView {
 
         let placeholder = adw::StatusPage::builder()
             .icon_name("chat-message-new-symbolic")
-            .title("No channel selected")
-            .description("Pick a channel from the sidebar to start reading.")
+            .title("No Channel Selected")
+            .description("Pick a channel from the sidebar to start reading")
             .build();
 
         let spinner = gtk::Spinner::builder()
@@ -1003,8 +1005,11 @@ impl ChatView {
         let topic = self.subtitle.text().to_string();
         let topic = topic.split(" · ").next().unwrap_or("").to_string();
         let line = match count {
-            Some(n) if !topic.is_empty() => format!("{topic} · {n} members"),
-            Some(n) => format!("{n} members"),
+            Some(n) if !topic.is_empty() => format!(
+                "{topic} · {n} {}",
+                super::message::plural(n, "member", "members")
+            ),
+            Some(n) => format!("{n} {}", super::message::plural(n, "member", "members")),
             None => topic,
         };
         self.subtitle.set_visible(!line.is_empty());
@@ -1018,7 +1023,7 @@ impl ChatView {
         }
 
         let menu = gtk::gio::Menu::new();
-        menu.append(Some("Catch me up"), Some("agent.catch-up"));
+        menu.append(Some("Catch Me Up"), Some("agent.catch-up"));
 
         let chats = gtk::gio::Menu::new();
         let on_open = Rc::new(on_open);
@@ -1197,11 +1202,11 @@ impl ChatView {
         });
         self.call_button
             .set_tooltip_text(Some(match (in_call, ongoing) {
-                (true, _) => "Leave the call",
+                (true, _) => "Leave Call",
                 // A call is running here and we are outside it: the button
                 // joins, which is not something an icon alone ever says.
-                (false, true) => "Join the call",
-                (false, false) => "Start a call",
+                (false, true) => "Join Call",
+                (false, false) => "Start Call",
             }));
         set_active(&self.call_button, in_call, "destructive-action");
         if in_call {
@@ -1234,7 +1239,7 @@ impl ChatView {
         self.inbox_button.set_tooltip_text(Some(&if count > 0 {
             format!("{count} unread — mentions and threads")
         } else {
-            "Mentions and threads".to_string()
+            "Mentions and Threads".to_string()
         }));
     }
 
@@ -2005,16 +2010,16 @@ fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
 /// available while letting the message field use almost all of a phone width.
 fn composer_options_menu(priority_menu: &gtk::gio::Menu) -> gtk::gio::Menu {
     let menu = gtk::gio::Menu::new();
-    menu.append(Some("Attach a file"), Some("composer.attach"));
-    menu.append(Some("Send later"), Some("composer.schedule"));
-    menu.append_submenu(Some("Message priority"), priority_menu);
+    menu.append(Some("Attach File…"), Some("composer.attach"));
+    menu.append(Some("Send Later…"), Some("composer.schedule"));
+    menu.append_submenu(Some("Message Priority"), priority_menu);
     menu
 }
 
 fn composer_options_button(menu: &gtk::gio::Menu) -> gtk::MenuButton {
     let button = gtk::MenuButton::builder()
         .icon_name("view-grid-symbolic")
-        .tooltip_text("More message options")
+        .tooltip_text("More Message Options")
         .menu_model(menu)
         .valign(gtk::Align::End)
         .width_request(COMPOSER_OPTIONS_BUTTON_WIDTH)
@@ -2325,15 +2330,15 @@ mod tests {
         assert_eq!(model.n_items(), 3);
         assert_eq!(
             model.item_attribute_value(0, "label", None).unwrap().str(),
-            Some("Attach a file")
+            Some("Attach File…")
         );
         assert_eq!(
             model.item_attribute_value(1, "label", None).unwrap().str(),
-            Some("Send later")
+            Some("Send Later…")
         );
         assert_eq!(
             model.item_attribute_value(2, "label", None).unwrap().str(),
-            Some("Message priority")
+            Some("Message Priority")
         );
     }
 }

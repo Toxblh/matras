@@ -106,7 +106,7 @@ impl CallDock {
         // alone would be a very small target for the most likely click here.
         let summary = gtk::Button::builder()
             .child(&summary_box)
-            .tooltip_text("Go to the call")
+            .tooltip_text("Go to Call")
             .hexpand(true)
             .build();
         summary.add_css_class("flat");
@@ -122,7 +122,7 @@ impl CallDock {
             .build();
         let people = gtk::MenuButton::builder()
             .icon_name("system-users-symbolic")
-            .tooltip_text("Who is in the call")
+            .tooltip_text("Participants")
             .popover(
                 &gtk::Popover::builder()
                     .child(
@@ -153,10 +153,10 @@ impl CallDock {
             .build();
 
         let mute = icon_button("microphone-disabled-symbolic", "Unmute", on_mute);
-        let screen = icon_button("video-display-symbolic", "Share your screen", on_screen);
-        let camera = icon_button("camera-web-symbolic", "Turn the camera on", on_camera);
-        let record = icon_button("media-record-symbolic", "Record the call", on_record);
-        let hand = icon_button(HAND_ICON_NAME, "Raise your hand", on_hand);
+        let screen = icon_button("video-display-symbolic", "Share Screen", on_screen);
+        let camera = icon_button("camera-web-symbolic", "Turn Camera On", on_camera);
+        let record = icon_button("media-record-symbolic", "Record Call", on_record);
+        let hand = icon_button(HAND_ICON_NAME, "Raise Hand", on_hand);
 
         // Without the video feature there is nothing behind these two; a
         // control that can never work is not drawn rather than drawn disabled.
@@ -204,7 +204,7 @@ impl CallDock {
         // Host-only, and destructive for everyone else in the call, so they
         // sit apart from the controls that only affect you.
         let on_host_all = Rc::new(on_host_all);
-        let mute_others = icon_button("microphone-disabled-symbolic", "Mute everyone else", {
+        let mute_others = icon_button("microphone-disabled-symbolic", "Mute Everyone Else", {
             let on_host = on_host_all.clone();
             move || on_host(HostAction::MuteOthers)
         });
@@ -228,7 +228,7 @@ impl CallDock {
         controls.append(&mute_others);
         controls.append(&end_call);
 
-        let leave = icon_button("call-stop-symbolic", "Leave the call", on_leave);
+        let leave = icon_button("call-stop-symbolic", "Leave Call", on_leave);
         leave.add_css_class("destructive-action");
         leave.set_halign(gtk::Align::End);
         leave.set_hexpand(true);
@@ -291,13 +291,13 @@ impl CallDock {
         set_state(
             &self.screen,
             true,
-            ("video-display-symbolic", "Stop sharing your screen"),
+            ("video-display-symbolic", "Stop Sharing Screen"),
             CALL_ACTIVE_CONTROL_CLASS,
         );
         set_state(
             &self.camera,
             true,
-            ("camera-web-symbolic", "Turn the camera off"),
+            ("camera-web-symbolic", "Turn Camera Off"),
             CALL_ACTIVE_CONTROL_CLASS,
         );
         let (icon, tooltip, flat) = hand_button_appearance(hand_raised);
@@ -343,7 +343,7 @@ impl CallDock {
                 self.avatar.set_show_initials(false);
                 self.avatar.set_custom_image(None::<&gtk::gdk::Paintable>);
                 self.avatar.set_icon_name(Some("audio-headphones-symbolic"));
-                self.title.set_text("In a call");
+                self.title.set_text("In a Call");
             }
         }
 
@@ -382,9 +382,9 @@ impl CallDock {
             (
                 "video-display-symbolic",
                 if call.screen.is_some() {
-                    "Stop sharing your screen"
+                    "Stop Sharing Screen"
                 } else {
-                    "Share your screen"
+                    "Share Screen"
                 },
             ),
             CALL_ACTIVE_CONTROL_CLASS,
@@ -395,9 +395,9 @@ impl CallDock {
             (
                 "camera-web-symbolic",
                 if call.camera.is_some() {
-                    "Turn the camera off"
+                    "Turn Camera Off"
                 } else {
-                    "Turn the camera on"
+                    "Turn Camera On"
                 },
             ),
             CALL_ACTIVE_CONTROL_CLASS,
@@ -423,9 +423,9 @@ impl CallDock {
             (
                 "media-record-symbolic",
                 if call.recording {
-                    "Stop recording"
+                    "Stop Recording"
                 } else {
-                    "Record the call"
+                    "Record Call"
                 },
             ),
             "destructive-action",
@@ -532,29 +532,22 @@ impl CallDock {
                     // Only the controls that apply: offering "stop sharing"
                     // to someone who is not sharing is a button that does
                     // nothing.
-                    let mut controls = vec![(
-                        "microphone-disabled-symbolic",
-                        "Mute them",
-                        HostAction::Mute,
-                    )];
+                    let mut controls =
+                        vec![("microphone-disabled-symbolic", "Mute", HostAction::Mute)];
                     if call.sharing.contains(user_id) {
                         controls.push((
                             "video-display-symbolic",
-                            "Stop their screen share",
+                            "Stop Screen Share",
                             HostAction::StopSharing,
                         ));
                     }
                     if call.hands.iter().any(|id| id == user_id) {
-                        controls.push((HAND_ICON_NAME, "Lower their hand", HostAction::LowerHand));
+                        controls.push((HAND_ICON_NAME, "Lower Hand", HostAction::LowerHand));
                     }
-                    controls.push((
-                        "emblem-default-symbolic",
-                        "Make them the host",
-                        HostAction::MakeHost,
-                    ));
+                    controls.push(("emblem-default-symbolic", "Make Host", HostAction::MakeHost));
                     controls.push((
                         "list-remove-symbolic",
-                        "Remove from call",
+                        "Remove From Call…",
                         HostAction::Remove,
                     ));
 
@@ -660,11 +653,7 @@ fn apply_named_icon(button: &gtk::Button, icon: &str) {
 fn hand_button_appearance(raised: bool) -> (&'static str, &'static str, bool) {
     (
         HAND_ICON_NAME,
-        if raised {
-            "Lower your hand"
-        } else {
-            "Raise your hand"
-        },
+        if raised { "Lower Hand" } else { "Raise Hand" },
         !raised,
     )
 }
@@ -677,7 +666,7 @@ mod hand_button_tests {
     fn raised_hand_uses_the_hand_icon_and_a_visible_active_button() {
         assert_eq!(
             hand_button_appearance(true),
-            ("hand-openyay-symbolic", "Lower your hand", false)
+            ("hand-openyay-symbolic", "Lower Hand", false)
         );
     }
 
@@ -685,7 +674,7 @@ mod hand_button_tests {
     fn lowered_hand_keeps_the_flat_raise_action() {
         assert_eq!(
             hand_button_appearance(false),
-            ("hand-openyay-symbolic", "Raise your hand", true)
+            ("hand-openyay-symbolic", "Raise Hand", true)
         );
     }
 }

@@ -66,8 +66,8 @@ pub fn show(parent: &adw::ApplicationWindow, title: &str, texture: &gtk::gdk::Te
         .tooltip_text(title)
         .build();
 
-    let copy = osd_button("edit-copy-symbolic", "Copy image");
-    let save = osd_button("document-save-symbolic", "Save image as…");
+    let copy = osd_button("edit-copy-symbolic", "Copy Image");
+    let save = osd_button("document-save-symbolic", "Save Image As…");
     let close = osd_button("window-close-symbolic", "Close");
 
     let buttons = gtk::Box::builder()
@@ -119,7 +119,7 @@ pub fn show(parent: &adw::ApplicationWindow, title: &str, texture: &gtk::gdk::Te
         let name = png_name(title);
         move |button| {
             let dialog = gtk::FileDialog::builder()
-                .title("Save image")
+                .title("Save Image")
                 .initial_name(&name)
                 .modal(true)
                 .build();

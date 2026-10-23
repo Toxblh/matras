@@ -124,7 +124,7 @@ impl RightPanel {
 
         let close = gtk::Button::builder()
             .icon_name("window-close-symbolic")
-            .tooltip_text("Close panel")
+            .tooltip_text("Close Panel")
             .build();
         close.add_css_class("flat");
         close.connect_clicked(move |_| on_close());
@@ -511,8 +511,8 @@ impl RightPanel {
             self.search_list.append(
                 &adw::StatusPage::builder()
                     .icon_name("system-search-symbolic")
-                    .title("No matches")
-                    .description("Nothing here matched that search.")
+                    .title("No Results Found")
+                    .description("Try a different search")
                     .css_classes(["compact"])
                     .build(),
             );
@@ -548,7 +548,7 @@ impl RightPanel {
                 .halign(gtk::Align::Start)
                 .margin_start(10)
                 .margin_top(8)
-                .tooltip_text("Go to this message")
+                .tooltip_text("Go to Message")
                 .build();
             go.add_css_class("flat");
             go.add_css_class("thread-link");
@@ -775,8 +775,8 @@ impl RightPanel {
         if st.mentions.is_empty() {
             self.mentions_list.append(&empty_state(
                 "mail-unread-symbolic",
-                "No recent mentions",
-                "Messages that name you show up here.",
+                "No Recent Mentions",
+                "Messages that name you show up here",
             ));
         }
         for post in &st.mentions {
@@ -827,8 +827,8 @@ impl RightPanel {
         if saved.is_empty() {
             self.saved_list.append(&empty_state(
                 "starred-symbolic",
-                "Nothing saved",
-                "Save a message from its menu and it waits here.",
+                "No Saved Messages",
+                "Save a message from its menu and it waits here",
             ));
         }
         for post in saved {
@@ -864,8 +864,8 @@ impl RightPanel {
         if st.thread_inbox.is_empty() {
             self.threads_list.append(&empty_state(
                 "chat-message-new-symbolic",
-                "No threads yet",
-                "Threads you follow appear here.",
+                "No Threads Yet",
+                "Threads you follow appear here",
             ));
         }
         for thread in &st.thread_inbox {
@@ -963,7 +963,7 @@ fn thread_item(store: &gtk::gio::ListStore, position: u32) -> Option<ThreadItem>
 fn render_thread_item(item: &ThreadItem, context: &RenderContext) -> gtk::Widget {
     match item {
         ThreadItem::Loading => adw::StatusPage::builder()
-            .title("Loading thread…")
+            .title("Loading Thread…")
             .vexpand(true)
             .build()
             .upcast(),

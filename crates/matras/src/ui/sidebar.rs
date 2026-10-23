@@ -155,7 +155,7 @@ impl ChannelSidebar {
             .build();
         let search_button = gtk::ToggleButton::builder()
             .icon_name("system-search-symbolic")
-            .tooltip_text("Search messages")
+            .tooltip_text("Search Messages")
             .build();
         search_button.add_css_class("flat");
         search_button
@@ -608,13 +608,13 @@ fn attach_row_menu(
     let mut entries: Vec<(String, String, RowAction)> = Vec::new();
     if state.unread(channel_id).is_unread() {
         entries.push((
-            "Mark as read".to_string(),
+            "Mark as Read".to_string(),
             "read".to_string(),
             RowAction::MarkRead,
         ));
     } else {
         entries.push((
-            "Mark as unread".to_string(),
+            "Mark as Unread".to_string(),
             "unread".to_string(),
             RowAction::MarkUnread,
         ));
