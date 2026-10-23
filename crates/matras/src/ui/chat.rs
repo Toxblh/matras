@@ -381,6 +381,7 @@ impl ChatView {
             .use_markup(false)
             .button_label("Join")
             .revealed(false)
+            .css_classes(["call-banner"])
             .build();
         call_banner.connect_button_clicked(move |_| on_call());
 
@@ -2049,8 +2050,23 @@ pub(super) fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
         .hscrollbar_policy(gtk::PolicyType::Never)
         .propagate_natural_height(true)
         .max_content_height(COMPOSER_MAX_CONTENT_HEIGHT)
+        .vscrollbar_policy(gtk::PolicyType::External)
         .child(entry)
         .build();
+    // A vertical scrollbar adds its own minimum length to the scroller's
+    // minimum height, which made the empty field twice a line tall. It only
+    // appears once the text actually overflows; External still scrolls.
+    scroller.vadjustment().connect_changed({
+        let scroller = scroller.clone();
+        move |adjustment| {
+            let overflows = adjustment.upper() > adjustment.page_size() + 1.0;
+            scroller.set_vscrollbar_policy(if overflows {
+                gtk::PolicyType::Automatic
+            } else {
+                gtk::PolicyType::External
+            });
+        }
+    });
     gtk::Frame::builder().hexpand(true).child(&scroller).build()
 }
 

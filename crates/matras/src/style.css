@@ -278,6 +278,25 @@ link:visited {
   font-size: 0.8em;
 }
 
+/* A call in progress is the one banner meant to be noticed, so it keeps the
+   accent colour instead of AdwBanner's neutral grey. */
+banner.call-banner > revealer > widget {
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
+}
+
+/* On the accent the default button background disappears, so Join borrows
+   the banner's foreground for its outline. */
+banner.call-banner > revealer > widget > button {
+  color: @accent_fg_color;
+  background-color: alpha(@accent_fg_color, 0.15);
+  border: 1px solid alpha(@accent_fg_color, 0.5);
+}
+
+banner.call-banner > revealer > widget > button:hover {
+  background-color: alpha(@accent_fg_color, 0.3);
+}
+
 /* ── message affordances ──────────────────────────────────────────────
    The avatar and the author name are both buttons, because both open the
    profile card. They must not *look* like buttons until pointed at. */
