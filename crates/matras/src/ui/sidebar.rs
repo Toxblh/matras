@@ -148,6 +148,7 @@ impl ChannelSidebar {
         let search_entry = gtk::SearchEntry::builder()
             .placeholder_text("Search messages, or file: to search attachments")
             .hexpand(true)
+            .search_delay(LIVE_SEARCH_DELAY_MS)
             .build();
         let search_bar = gtk::SearchBar::builder()
             .child(&search_entry)
@@ -165,11 +166,29 @@ impl ChannelSidebar {
             .build();
         header.pack_end(&search_button);
 
-        // On activate, not on every keystroke: a post search is a round trip
-        // to the server, and searching per character would be a request per
-        // character.
-        search_entry.connect_activate(move |entry| {
-            if let Some(terms) = submitted_search_terms(entry.text().as_str()) {
+        // Live, but not per keystroke: a post search is a round trip to the
+        // server, so it waits for a pause in typing (`search-delay`) and for
+        // enough of a query to be worth asking about. Enter searches at once,
+        // whatever the length.
+        let on_search = Rc::new(on_search);
+        let last_search: Rc<RefCell<String>> = Rc::default();
+        search_entry.connect_activate({
+            let on_search = on_search.clone();
+            let last_search = last_search.clone();
+            move |entry| {
+                if let Some(terms) = submitted_search_terms(entry.text().as_str()) {
+                    last_search.replace(terms.clone());
+                    on_search(terms);
+                }
+            }
+        });
+        search_entry.connect_search_changed(move |entry| {
+            let Some(terms) = live_search_terms(entry.text().as_str()) else {
+                return;
+            };
+            // Enter may already have asked for exactly this.
+            if *last_search.borrow() != terms {
+                last_search.replace(terms.clone());
                 on_search(terms);
             }
         });
@@ -516,6 +535,19 @@ pub(crate) fn inbox_button_visibility(collapsed: bool, showing_content: bool) ->
 /// there before showing it when the channel list is currently on screen.
 pub(crate) fn inbox_requires_chat_navigation(collapsed: bool, showing_content: bool) -> bool {
     collapsed && !showing_content
+}
+
+/// The pause in typing before a live search goes out.
+const LIVE_SEARCH_DELAY_MS: u32 = 300;
+/// Shorter queries wait for Enter: they match too much to be worth a request.
+const LIVE_SEARCH_MIN_CHARS: usize = 3;
+
+/// The query to search for while typing, if it is long enough. A `file:`
+/// prefix does not count towards the length.
+fn live_search_terms(input: &str) -> Option<String> {
+    let terms = submitted_search_terms(input)?;
+    let query = terms.strip_prefix("file:").unwrap_or(&terms).trim();
+    (query.chars().count() >= LIVE_SEARCH_MIN_CHARS).then_some(terms)
 }
 
 fn submitted_search_terms(input: &str) -> Option<String> {
@@ -1238,6 +1270,16 @@ mod tests {
         let small_width = super::super::profile::presence_badge_size(24);
         let large_width = super::super::profile::presence_badge_size(40);
         assert_eq!((small_width, large_width), (10, 13));
+    }
+
+    #[test]
+    fn live_search_waits_for_three_characters() {
+        use super::live_search_terms;
+        assert_eq!(live_search_terms("ab"), None);
+        assert_eq!(live_search_terms(" abc "), Some("abc".to_string()));
+        assert_eq!(live_search_terms("file: ab"), None);
+        assert_eq!(live_search_terms("file:abc"), Some("file:abc".to_string()));
+        assert_eq!(live_search_terms("ёжик"), Some("ёжик".to_string()));
     }
 
     #[test]
