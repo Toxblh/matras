@@ -1,0 +1,4 @@
+$ cargo test --offline -p matras --lib ui::shortcuts::tests::close_window_shortcut_is_ctrl_w_and_is_distinct_from_inbox -- --exact --test-threads=1
+running 1 test
+test ui::shortcuts::tests::close_window_shortcut_is_ctrl_w_and_is_distinct_from_inbox ... ok
+test result: ok. 1 passed; 0 failed

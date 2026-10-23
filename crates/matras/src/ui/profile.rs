@@ -222,7 +222,7 @@ fn local_time(user: &User) -> Option<String> {
 pub fn with_presence(avatar: &adw::Avatar, presence: Presence) -> gtk::Overlay {
     // Scaled off the avatar so the same helper works for a 40px message
     // avatar and a 20px sidebar one.
-    let size = (avatar.size() / 3).clamp(8, 14);
+    let size = presence_badge_size(avatar.size());
     let dot = gtk::Box::builder()
         .width_request(size)
         .height_request(size)
@@ -238,6 +238,14 @@ pub fn with_presence(avatar: &adw::Avatar, presence: Presence) -> gtk::Overlay {
     let overlay = gtk::Overlay::builder().child(avatar).build();
     overlay.add_overlay(&dot);
     overlay
+}
+
+pub(super) fn presence_badge_size(avatar_size: i32) -> i32 {
+    (avatar_size / 3).clamp(10, 14)
+}
+
+pub(super) fn header_presence_badge_size(avatar_size: i32) -> i32 {
+    presence_badge_size(avatar_size).max(12)
 }
 
 fn presence_label(presence: Presence) -> &'static str {

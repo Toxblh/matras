@@ -376,6 +376,7 @@ impl CallSession {
 
         // ---- Phase B: our session id is the websocket connection id.
         let session_id = current_connection_id(&ws, &mut rx).await?;
+        tracing::info!(%session_id, "calls: got connection id, sending calls_join");
 
         let dc_signaling = discovery.config.dc_signaling_allowed();
         let join = JoinMessage {
@@ -391,6 +392,7 @@ impl CallSession {
         // Do not build the peer connection before the ack: the plugin may
         // refuse (participant limit, permissions, unlicensed group call).
         wait_for_join_ack(&mut rx, &session_id).await?;
+        tracing::info!("calls: join acked, building peer connection");
 
         // ---- Phase C: peer connection and first negotiation.
         let pc =
@@ -465,6 +467,7 @@ impl CallSession {
                 let updates = updates.clone();
                 Box::pin(async move {
                     use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as S;
+                    tracing::info!(?state, "calls: peer connection state changed");
                     let _ = updates.send(CallUpdate::Connected(matches!(state, S::Connected)));
                     if matches!(state, S::Failed | S::Closed) {
                         let _ = updates.send(CallUpdate::Ended);

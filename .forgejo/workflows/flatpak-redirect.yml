@@ -1,0 +1,89 @@
+name: flatpak-redirect
+
+# One-time handover of the old signed remote to matras/flatpak. Rerun manually
+# if the old repository needs the redirect republished before it is removed.
+on:
+  push:
+    branches: [master]
+    paths: [.forgejo/workflows/flatpak-redirect.yml]
+  workflow_dispatch:
+
+jobs:
+  redirect:
+    if: github.ref == 'refs/heads/master'
+    runs-on: als-huge
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions@sha256:bdbeb241813021cf96f3001ccceea46b8e0c3c46a316172992fd60ad9dfc50e2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Publish signed redirect from old repository
+        env:
+          FLATPAK_GPG_ID: ${{ secrets.FLATPAK_GPG_ID }}
+          FLATPAK_GPG_KEY_B64: ${{ secrets.FLATPAK_GPG_KEY_B64 }}
+          FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
+          FLATPAK_REPO_SSH_KEY_B64: ${{ secrets.FLATPAK_REPO_SSH_KEY_B64 }}
+          FLATPAK_REPO_KNOWN_HOSTS: ${{ secrets.FLATPAK_REPO_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          : "${FLATPAK_GPG_ID:?}"
+          : "${FLATPAK_GPG_KEY_B64:?}"
+          : "${FLATPAK_GPG_PASSPHRASE:?}"
+          : "${FLATPAK_REPO_SSH_KEY_B64:?}"
+          : "${FLATPAK_REPO_KNOWN_HOSTS:?}"
+
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          umask 077
+          export GNUPGHOME="$work/gnupg"
+          mkdir -p "$GNUPGHOME" "$work/ssh"
+          printf '%s' "$FLATPAK_GPG_PASSPHRASE" > "$GNUPGHOME/passphrase"
+          unset FLATPAK_GPG_PASSPHRASE
+          cat > "$GNUPGHOME/pinentry" <<'PINENTRY'
+          #!/bin/sh
+          echo "OK Pleased to meet you"
+          while IFS= read -r line; do
+            case "$line" in
+              GETPIN*) printf 'D %s\nOK\n' "$(cat "${0%/*}/passphrase")" ;;
+              BYE*) echo "OK closing connection"; exit 0 ;;
+              *) echo "OK" ;;
+            esac
+          done
+          PINENTRY
+          chmod 700 "$GNUPGHOME/pinentry"
+          printf 'pinentry-program %s/pinentry\nallow-loopback-pinentry\n' \
+            "$GNUPGHOME" > "$GNUPGHOME/gpg-agent.conf"
+          gpg_bin=$(command -v gpg2 || command -v gpg)
+          printf '%s' "$FLATPAK_GPG_KEY_B64" | base64 -d | \
+            "$gpg_bin" --batch --quiet --pinentry-mode loopback \
+              --passphrase-file "$GNUPGHOME/passphrase" --import
+          unset FLATPAK_GPG_KEY_B64
+
+          printf '%s' "$FLATPAK_REPO_SSH_KEY_B64" | base64 -d > "$work/ssh/id"
+          printf '%s\n' "$FLATPAK_REPO_KNOWN_HOSTS" > "$work/ssh/known_hosts"
+          unset FLATPAK_REPO_SSH_KEY_B64 FLATPAK_REPO_KNOWN_HOSTS
+          chmod 600 "$work/ssh/id" "$work/ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $work/ssh/id -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$work/ssh/known_hosts"
+
+          old=ssh://forgejo@altlinux.space/toxblh/flatpak.git
+          target=https://altlinux.space/toxblh/matras/raw/branch/flatpak
+          git clone --quiet --depth 1 --branch master "$old" "$work/repo"
+          mkdir -p "$work/repo"/{extensions,state,tmp} \
+            "$work/repo"/refs/{heads,mirrors,remotes}
+          flatpak build-update-repo --title=Matras --default-branch=stable \
+            --redirect-url="$target" --gpg-sign="$FLATPAK_GPG_ID" \
+            --gpg-homedir="$GNUPGHOME" "$work/repo"
+          sed -i "s#^Url=https://altlinux.space/toxblh/flatpak/raw/branch/master#Url=$target#" \
+            "$work/repo/ru.toxblh.Matras.flatpakref"
+          git -C "$work/repo" config user.name 'Matras CI'
+          git -C "$work/repo" config user.email 'toxblh@gmail.com'
+          git -C "$work/repo" checkout -q --orphan redirect-snapshot
+          git -C "$work/repo" add -A
+          git -C "$work/repo" -c commit.gpgsign=false commit -q \
+            -m 'Redirect signed Flatpak remote to toxblh/matras'
+          git -C "$work/repo" push --force "$old" redirect-snapshot:master
+          echo "Old Flatpak remote now redirects to $target"

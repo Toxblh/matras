@@ -14,8 +14,10 @@ use mattermost_api::models::{Millis, Post};
 
 use crate::avatars::Avatars;
 use crate::state::SharedState;
-use crate::ui::chat::{self, post_revision, RenderContext};
+use crate::ui::chat::{self, composer_content_height, post_revision, RenderContext};
 use crate::ui::message::{self, MessageActions, RowOptions};
+
+const THREAD_COMPOSER_SINGLE_LINE_HEIGHT: i32 = 28;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PanelMode {
@@ -26,6 +28,24 @@ pub enum PanelMode {
     Inbox,
     /// Results for a search, held so a redraw does not lose them.
     Search(String),
+}
+
+/// Whether the panel needs its own close control in addition to the window
+/// close button.
+pub fn explicit_close_visible(mode: &PanelMode) -> bool {
+    !matches!(mode, PanelMode::Inbox | PanelMode::Thread(_))
+}
+
+/// Whether a window close request should dismiss the inbox panel first.
+pub fn window_close_dismisses_panel(mode: &PanelMode) -> bool {
+    matches!(mode, PanelMode::Inbox | PanelMode::Thread(_))
+}
+
+/// Threads become an overlay when the window cannot comfortably hold three
+/// panes. The live width is also checked because a panel can open before the
+/// first breakpoint notification has arrived.
+pub fn panel_should_overlay(narrow: bool, window_width: i32, mode: &PanelMode) -> bool {
+    narrow || window_width < 1200 || matches!(mode, PanelMode::Inbox | PanelMode::Search(_))
 }
 
 pub struct RightPanel {
@@ -71,6 +91,7 @@ pub struct RightPanel {
     on_open_post: Rc<dyn Fn(String, String)>,
     /// Channel id and post id: open that channel *at* that message.
     on_jump: Rc<dyn Fn(String, String)>,
+    close: gtk::Button,
 }
 
 impl RightPanel {
@@ -202,20 +223,18 @@ impl RightPanel {
         let thread_entry = gtk::TextView::builder()
             .wrap_mode(gtk::WrapMode::WordChar)
             .accepts_tab(false)
-            .top_margin(8)
-            .bottom_margin(8)
+            .hexpand(true)
+            .height_request(THREAD_COMPOSER_SINGLE_LINE_HEIGHT)
+            .top_margin(4)
+            .bottom_margin(4)
             .left_margin(8)
             .right_margin(8)
             .build();
-        let entry_frame = gtk::ScrolledWindow::builder()
+        let entry_frame = gtk::Frame::builder()
             .hexpand(true)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .min_content_height(40)
-            .max_content_height(140)
-            .propagate_natural_height(true)
             .child(&thread_entry)
             .build();
-        entry_frame.add_css_class("card");
+        entry_frame.add_css_class("thread-composer-entry");
 
         let send = gtk::Button::builder()
             .icon_name("document-send-symbolic")
@@ -274,7 +293,10 @@ impl RightPanel {
         thread_entry.buffer().connect_changed({
             let restoring = restoring.clone();
             let on_draft = Rc::new(on_draft);
-            move |_| {
+            let entry_frame = entry_frame.clone();
+            move |buffer| {
+                let lines = buffer.line_count();
+                entry_frame.set_height_request(composer_content_height(lines));
                 if !*restoring.borrow() {
                     on_draft();
                 }
@@ -300,12 +322,7 @@ impl RightPanel {
         inbox_stack.add_titled(&scroller(&threads_list), Some("threads"), "Threads");
         inbox_stack.add_titled(&scroller(&saved_list), Some("saved"), "Saved");
 
-        let switcher = gtk::StackSwitcher::builder()
-            .stack(&inbox_stack)
-            .halign(gtk::Align::Center)
-            .margin_top(8)
-            .margin_bottom(4)
-            .build();
+        let switcher = inbox_tab_bar(&inbox_stack);
 
         let inbox_page = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -358,6 +375,7 @@ impl RightPanel {
             on_open_thread: Rc::new(on_open_thread),
             on_open_post: Rc::new(on_open_post),
             on_jump: Rc::new(on_jump),
+            close,
         })
     }
 
@@ -372,6 +390,7 @@ impl RightPanel {
         // comes through here, which is what keeps the guard below meaningful.
         self.drawn.set(None);
         self.showing_thread.borrow_mut().take();
+        self.close.set_visible(explicit_close_visible(&mode));
         *self.mode.borrow_mut() = mode;
     }
 
@@ -1118,6 +1137,126 @@ fn scroller(child: &gtk::Box) -> gtk::ScrolledWindow {
         .vexpand(true)
         .child(child)
         .build()
+}
+
+const INBOX_TAB_PAGES: [(&str, &str); 3] = [
+    ("mentions", "Mentions"),
+    ("threads", "Threads"),
+    ("saved", "Saved"),
+];
+
+fn inbox_tab_bar(stack: &gtk::Stack) -> gtk::Box {
+    let bar = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(4)
+        .hexpand(true)
+        .margin_top(8)
+        .margin_bottom(4)
+        .margin_start(8)
+        .margin_end(8)
+        .build();
+    let mut first: Option<gtk::ToggleButton> = None;
+    for (name, title) in INBOX_TAB_PAGES {
+        let button = gtk::ToggleButton::with_label(title);
+        button.add_css_class("flat");
+        if let Some(group) = first.as_ref() {
+            button.set_group(Some(group));
+        } else {
+            first = Some(button.clone());
+        }
+        button.set_active(stack.visible_child_name().as_deref() == Some(name));
+        let target = stack.clone();
+        button.connect_toggled(move |button| {
+            if button.is_active() {
+                target.set_visible_child_name(name);
+            }
+        });
+        bar.append(&button);
+    }
+    let bar_buttons = bar.clone();
+    stack.connect_visible_child_name_notify(move |stack| {
+        let mut child = bar_buttons.first_child();
+        for (name, _) in INBOX_TAB_PAGES {
+            if let Some(button) = child.and_downcast::<gtk::ToggleButton>() {
+                button.set_active(stack.visible_child_name().as_deref() == Some(name));
+                child = button.next_sibling();
+            } else {
+                break;
+            }
+        }
+    });
+    bar
+}
+
+#[cfg(test)]
+mod inbox_tab_layout_tests {
+    use super::*;
+
+    #[test]
+    fn inbox_tabs_fit_a_narrow_sidebar() {
+        // Keep short labels rather than GtkStackSwitcher’s homogeneous
+        // 3×button-width allocation, which asked for 400px at PinePhone size.
+        assert_eq!(INBOX_TAB_PAGES.len(), 3);
+        assert!(INBOX_TAB_PAGES
+            .iter()
+            .all(|(_, title)| title.chars().count() <= 8));
+    }
+}
+
+#[cfg(test)]
+mod inbox_close_tests {
+    use super::*;
+
+    #[test]
+    fn the_inbox_uses_only_the_window_close_control() {
+        assert!(!explicit_close_visible(&PanelMode::Inbox));
+    }
+
+    #[test]
+    fn a_thread_uses_only_the_window_close_control() {
+        assert!(!explicit_close_visible(&PanelMode::Thread("post".into())));
+    }
+
+    #[test]
+    fn a_window_close_dismisses_an_open_inbox() {
+        assert!(window_close_dismisses_panel(&PanelMode::Inbox));
+        assert!(window_close_dismisses_panel(&PanelMode::Thread(
+            "post".into()
+        )));
+    }
+
+    #[test]
+    fn closing_another_panel_is_left_to_window_background_mode() {
+        assert!(!window_close_dismisses_panel(&PanelMode::Hidden));
+        assert!(!window_close_dismisses_panel(&PanelMode::Search(
+            "post".into()
+        )));
+    }
+}
+
+#[cfg(test)]
+mod panel_width_tests {
+    use super::*;
+
+    #[test]
+    fn thread_panels_overlay_at_phone_and_tablet_widths_even_before_breakpoints_fire() {
+        let thread = PanelMode::Thread("post".into());
+        assert!(panel_should_overlay(false, 360, &thread));
+        assert!(panel_should_overlay(false, 720, &thread));
+        assert!(panel_should_overlay(true, 1320, &thread));
+        assert!(!panel_should_overlay(false, 1320, &thread));
+    }
+
+    #[test]
+    fn inbox_and_search_always_overlay() {
+        assert!(panel_should_overlay(false, 1320, &PanelMode::Inbox));
+        assert!(panel_should_overlay(
+            false,
+            1320,
+            &PanelMode::Search("x".into())
+        ));
+        assert_eq!(THREAD_COMPOSER_SINGLE_LINE_HEIGHT, 28);
+    }
 }
 
 fn empty_state(icon: &str, title: &str, description: &str) -> gtk::Widget {

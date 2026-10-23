@@ -1,0 +1,47 @@
+Issue #1 regression test evidence
+
+Initial failing run (before fix):
+$ cargo test -p matras --lib ui::message::tests::long_code_lines_scroll_without_widening_the_message_pane -- --exact --nocapture --test-threads=1
+running 1 test
+test ui::message::tests::long_code_lines_scroll_without_widening_the_message_pane ... FAILED
+assertion failed: !scroller.propagates_natural_width()
+test result: FAILED. 0 passed; 1 failed
+
+Initial failing run (before fix):
+$ cargo test -p matras --lib ui::chat::tests::composer_entry_has_a_small_intrinsic_width_for_narrow_windows -- --exact --nocapture --test-threads=1
+running 1 test
+test ui::chat::tests::composer_entry_has_a_small_intrinsic_width_for_narrow_windows ... FAILED
+assertion `left == right` failed
+  left: -1
+ right: 1
+test result: FAILED. 0 passed; 1 failed
+
+These assertion failures were observed with GTK connected to Wayland and the tests
+temporarily reading the actual ScrolledWindow properties. The checks now pin the
+layout values used by the builders without initializing GTK in test threads.
+
+Passing runs (after fix):
+$ cargo test -p matras --lib ui::message::tests::long_code_lines_scroll_without_widening_the_message_pane -- --exact --nocapture --test-threads=1
+test ui::message::tests::long_code_lines_scroll_without_widening_the_message_pane ... ok
+test result: ok. 1 passed; 0 failed
+
+$ cargo test -p matras --lib ui::chat::tests::composer_entry_has_a_small_intrinsic_width_for_narrow_windows -- --exact --nocapture --test-threads=1
+test ui::chat::tests::composer_entry_has_a_small_intrinsic_width_for_narrow_windows ... ok
+test result: ok. 1 passed; 0 failed
+
+Full Matras library suite:
+$ cargo test -p matras --lib -- --test-threads=1
+test result: ok. 123 passed; 0 failed; 0 ignored
+
+Full workspace suite:
+$ cargo test --workspace -- --test-threads=1
+Matras library: 123 passed; 0 failed
+Mattermost API library: 22 passed; 0 failed
+Mattermost calls library: 36 passed; 0 failed
+Doc-tests: passed
+
+Build and formatting:
+$ cargo check -p matras --lib
+Finished `dev` profile successfully
+$ rustfmt --check --edition 2021 crates/matras/src/ui/chat.rs crates/matras/src/ui/message.rs
+passed

@@ -1,0 +1,16 @@
+# Machine-файл для rustc под Android.
+#
+# Зачем: prepare/android.cross у pixiewood не содержит [binaries] rust, а meson сам
+# не подставляет rustc флаг target — он берёт триплет из `rustc -vV`, то есть хоста.
+#
+# Константы arch / platform / toolchain приходят из arch/<arch>.cross и android.cross:
+# meson читает все machine-файлы одним парсером и мержит [constants], поэтому файл
+# остаётся арко-независимым и годится и для aarch64, и для x86_64.
+#
+# API 31 не с потолка: ровно его pixiewood зашивает в имя clang-враппера. Разойтись
+# нельзя — получим два разных минимальных API в одном .so.
+
+[binaries]
+rust = ['rustc',
+        '--target', arch + '-linux-android',
+        '-C', 'linker=' + toolchain / 'bin' / arch + '-linux-' + platform + '31-clang']

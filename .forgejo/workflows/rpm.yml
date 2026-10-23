@@ -1,0 +1,64 @@
+name: rpm
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: als-huge
+    timeout-minutes: 180
+    container:
+      image: altlinux.space/actions/runner/hasherc:sisyphus
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [sisyphus, p11]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Vendor locked Rust dependencies
+        run: |
+          apt-get update
+          apt-get install -y rust rust-cargo
+          mkdir -p .cargo
+          cargo vendor --locked vendor > .cargo/config.toml
+          # Distinct branch and run releases avoid overwriting published RPMs.
+          release="alt1.${{ matrix.branch }}.g${GITHUB_SHA:0:12}.r${GITHUB_RUN_ID}"
+          sed -i "s/^Release: alt1$/Release: $release/" matras.spec
+          sed -i "s/ 0.1.0-alt1$/ 0.1.0-$release/" matras.spec
+
+      - name: Build RPM in ALT ${{ matrix.branch }}
+        uses: actions/build-rpm-action@a29a423f8a77bfa2f5e9b42aa9fae85fa7fc75f5
+        with:
+          branch: ${{ matrix.branch }}
+
+      - name: Collect RPMs
+        run: |
+          mkdir -p rpm-artifacts
+          find -L ~/.cache/hasherc/matras/out/RPMS -type f \
+            -name '*.rpm' ! -name '*debuginfo*.rpm' ! -name '*.src.rpm' \
+            -exec cp {} rpm-artifacts/ \;
+          test -n "$(find rpm-artifacts -name '*.rpm' -print -quit)"
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Matras-${{ matrix.branch }}-x86_64
+          path: rpm-artifacts/*.rpm
+          if-no-files-found: error
+
+      - name: Publish RPM to Matras Packages
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+          PACKAGES_ALT_GROUP: ${{ matrix.branch }}
+        run: |
+          if [ -z "$PACKAGES_TOKEN" ]; then
+            echo 'Skipping Packages upload: add the PACKAGES_TOKEN secret'
+            exit 0
+          fi
+          build-aux/publish-package.sh alt rpm-artifacts/*.rpm

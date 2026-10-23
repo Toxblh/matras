@@ -4,3 +4,8 @@
 /.flatpak-repo
 /.flatpak-state
 /.claude
+/.buildconfig
+/.pixiewood/
+/subprojects/
+/.android-tools/
+/apks/

@@ -1,0 +1,47 @@
+name: android
+
+on:
+  push:
+    branches: [android, master]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    # Pixiewood uses Google's linux-x86_64 NDK toolchain to produce arm64 APKs.
+    runs-on: als-huge
+    timeout-minutes: 240
+    container:
+      image: node:22-bookworm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Build arm64 APK
+        run: sh build-aux/android/ci-linux.sh
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v3
+        with:
+          name: Matras-arm64-v8a
+          path: apks/*.apk
+          if-no-files-found: error
+
+      - name: Publish signed APK to Matras Packages
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$PACKAGES_TOKEN" ]; then
+            echo 'Skipping Packages upload: add the PACKAGES_TOKEN secret'
+          elif [ ! -s apks/Matras-arm64-v8a-release-signed.apk ]; then
+            echo 'Skipping Packages upload: add the three Android signing secrets'
+          else
+            version="g${GITHUB_SHA:0:12}-r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}"
+            build-aux/publish-package.sh generic matras-apk "$version" \
+              apks/Matras-arm64-v8a-release-signed.apk
+          fi

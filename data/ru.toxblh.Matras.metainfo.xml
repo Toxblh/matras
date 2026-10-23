@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<component type="desktop-application">
+<component type="desktop-application" xmlns="https://specifications.freedesktop.org/metainfo/1.0">
   <id>ru.toxblh.Matras</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
@@ -39,6 +39,24 @@
 
   <releases>
     <release version="1.0.1" date="2026-10-23"/>
+    <release version="0.1.5" date="2026-09-25">
+      <description>
+        <p>Android messages scroll on drag, open threads on tap and expose text selection and actions on long press.</p>
+      </description>
+    </release>
+    <release version="0.1.2" date="2026-09-25">
+      <description>
+        <p>Android messages scroll on drag, open threads on tap and expose text selection and actions on long press.</p>
+      </description>
+    </release>
+    <release version="0.1.1" date="2026-09-25">
+      <description>
+        <p>Android message swipes scroll the conversation; reply actions open threads.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-09-03"/>
   </releases>
+  <requires>
+    <internet>always</internet>
+  </requires>
 </component>

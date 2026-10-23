@@ -135,16 +135,18 @@ the URI to the live instance over D-Bus.
 
 ## Install
 
-A signed flatpak repository is published from this project's own CI. One click
-on the ref file adds the remote and installs the app; everything after that is
-an ordinary `flatpak update`:
+Flatpak is delivered as an OCI image from the Forgejo Container registry. Add
+the stable remote and install the app:
 
 ```sh
-flatpak install https://altlinux.space/toxblh/flatpak/raw/branch/master/ru.toxblh.Matras.flatpakref
+flatpak remote-add --user --no-gpg-verify matras-oci \
+  'oci+https://altlinux.space/api/packages/toxblh/container#stable'
+flatpak install --user matras-oci ru.toxblh.Matras
+flatpak update --user ru.toxblh.Matras
 ```
 
-The runtime comes from Flathub, so that remote has to exist — the ref file
-points at it and flatpak will offer to add it.
+Flatpak selects x86_64 or aarch64 automatically. The GNOME runtime comes from
+Flathub. To install system-wide, omit `--user` from these commands.
 
 ## Building
 
@@ -238,50 +240,47 @@ protocol largely are not. `docs/PROTOCOL.md` records what was found by reading
 `mattermost/mattermost`, `mattermost-plugin-calls`, `rtcd` and `calls-common`,
 including several behaviours that fail *silently* if you get them wrong.
 
-## Publishing the flatpak
+## Android APK
 
-`.forgejo/workflows/flatpak.yml` builds the manifest in `build-aux/` on every
-push to `master` and force-pushes the resulting ostree repository to
-`toxblh/flatpak` on ALS, where Forgejo's `raw/branch/master` endpoint serves it
-as an ordinary HTTP flatpak remote. There is no static host to keep alive.
+The [Android build instructions](build-aux/android/README.md) and
+`.forgejo/workflows/android.yml` build an arm64 APK on pushes to `android` or
+`master`. Forgejo stores the unsigned APK as a workflow artifact and, when
+signing secrets are configured, also uploads a signed APK.
 
-The repository it pushes to is `toxblh/flatpak`, public, so that Forgejo will
-serve it to anonymous clients. CI authenticates with a write **deploy key** on
-that one repository rather than an account token, and pins the host key.
+## Forgejo Packages
 
-Five Actions secrets on this repository drive it:
+The CI workflows publish downloads to the [Matras Packages tab](https://altlinux.space/toxblh/matras/packages):
 
-| Secret | Value |
-|---|---|
-| `FLATPAK_GPG_ID` | fingerprint of the signing key |
-| `FLATPAK_GPG_KEY_B64` | `gpg2 --export-secret-keys <fpr> \| base64 -w0` |
-| `FLATPAK_GPG_PASSPHRASE` | that key's passphrase |
-| `FLATPAK_REPO_SSH_KEY_B64` | the deploy key's private half, base64 |
-| `FLATPAK_REPO_KNOWN_HOSTS` | `ssh-keyscan altlinux.space`, fingerprint-verified |
+- Signed Android arm64 APK: Generic package `matras-apk`.
+- x86_64 and aarch64 Flatpak OCI images: Container packages
+  `ru.toxblh.matras-x86_64-stable` and `ru.toxblh.matras-aarch64-stable`.
+- ALT Sisyphus and p11 RPMs: ALT package `matras`, in separate `sisyphus` and
+  `p11` groups. The RPM source is [matras.spec](matras.spec); its locked Rust
+  dependencies are vendored by CI before the isolated Gear build.
 
-The signing key never enters a personal keyring: it lives as an exported
-blob beside its passphrase, and every publish — local or CI — imports it into
-a throwaway `GNUPGHOME` the same way.
+Forgejo packages belong to the `toxblh` account. After each upload,
+`build-aux/publish-package.sh` links the package to this repository so that it
+appears on the Matras Packages tab. Install Flatpak from the OCI remote above
+so `flatpak update` checks the published `stable` image.
 
-```sh
-~/.config/als-forgejo/matras-flatpak-key.b64   # FLATPAK_GPG_KEY_B64
-~/.config/als-forgejo/matras-flatpak-pass      # FLATPAK_GPG_PASSPHRASE
-```
+To enable publishing, create a personal access token in
+[Forgejo Settings → Applications](https://altlinux.space/user/settings/applications)
+with `write:package` scope and **Public only** access. Save it as the
+`PACKAGES_TOKEN` secret in [Matras Actions settings](https://altlinux.space/toxblh/matras/settings/actions/secrets).
+Without this secret, CI still builds and uploads workflow artifacts but skips
+Packages. Publishing the Android APK also requires the signing secrets listed
+in [the Android instructions](build-aux/android/README.md); unsigned APKs are
+kept only as workflow artifacts.
 
-That homedir also gets a stub pinentry, because ostree signs through gpgme,
-which cannot hand a passphrase to gpg-agent itself, and the build image has
-no pinentry to prompt with.
+## Publishing the Flatpak
 
-The workflow writes `ru.toxblh.Matras.flatpakref` into the published repository
-itself, with the public key embedded, so the install link above always carries
-the key that signed what it points at.
-
-The same script builds locally, into `.flatpak-repo`:
-
-```sh
-build-aux/publish-flatpak.sh
-flatpak install --user .flatpak-repo ru.toxblh.Matras
-```
+`.forgejo/workflows/flatpak.yml` builds a Flatpak OCI image for each supported
+architecture and publishes `stable` plus `oci-test` tags through Forgejo's
+Container registry. `build-aux/publish-oci-flatpak.py` uploads the OCI blobs and
+manifest directly to the registry. The `PACKAGES_TOKEN` Actions secret needs
+`write:package` scope. The published registry index carries Flatpak ref and
+commit labels, so clients can discover and update the app through
+`flatpak update`.
 
 ## Licence
 

@@ -20,6 +20,13 @@ use adw::prelude::*;
 use crate::avatars::Avatars;
 use crate::state::SharedState;
 
+const HAND_ICON_NAME: &str = "hand-openyay-symbolic";
+const CALL_ACTIVE_CONTROL_CLASS: &str = "accent";
+
+pub(crate) fn dock_belongs_in_chat(collapsed: bool, showing_content: bool) -> bool {
+    collapsed && showing_content
+}
+
 /// What the host can do to somebody else in the call.
 #[derive(Debug, Clone, Copy)]
 pub enum HostAction {
@@ -149,7 +156,14 @@ impl CallDock {
         let screen = icon_button("video-display-symbolic", "Share your screen", on_screen);
         let camera = icon_button("camera-web-symbolic", "Turn the camera on", on_camera);
         let record = icon_button("media-record-symbolic", "Record the call", on_record);
-        let hand = icon_button("view-sort-descending-symbolic", "Raise your hand", on_hand);
+        let hand = icon_button(HAND_ICON_NAME, "Raise your hand", on_hand);
+
+        // Without the video feature there is nothing behind these two; a
+        // control that can never work is not drawn rather than drawn disabled.
+        #[cfg(not(feature = "video"))]
+        for hidden in [&screen, &camera] {
+            hidden.set_visible(false);
+        }
 
         // A quick reaction, which is how people agree without interrupting.
         let reactions = gtk::Box::builder()
@@ -254,6 +268,38 @@ impl CallDock {
         }
     }
 
+    /// Populates the dock with deterministic controls for issue screenshots.
+    pub fn show_demo_preview(&self, hand_raised: bool) {
+        self.title.set_text("Sara Okafor is talking");
+        self.subtitle.set_text("Development · 3 in the call");
+        set_state(
+            &self.mute,
+            true,
+            ("audio-input-microphone-symbolic", "Mute"),
+            CALL_ACTIVE_CONTROL_CLASS,
+        );
+        set_state(
+            &self.screen,
+            true,
+            ("video-display-symbolic", "Stop sharing your screen"),
+            CALL_ACTIVE_CONTROL_CLASS,
+        );
+        set_state(
+            &self.camera,
+            true,
+            ("camera-web-symbolic", "Turn the camera off"),
+            CALL_ACTIVE_CONTROL_CLASS,
+        );
+        let (icon, tooltip, flat) = hand_button_appearance(hand_raised);
+        set_state(&self.hand, hand_raised, (icon, tooltip), "suggested-action");
+        if flat {
+            self.hand.add_css_class("flat");
+        } else {
+            self.hand.remove_css_class("flat");
+        }
+        self.widget.set_visible(true);
+    }
+
     /// Shows one line of live transcription, or clears it.
     pub fn set_caption(&self, who: &str, text: &str) {
         let show = !text.trim().is_empty();
@@ -318,7 +364,7 @@ impl CallDock {
             } else {
                 ("audio-input-microphone-symbolic", "Mute")
             },
-            "suggested-action",
+            CALL_ACTIVE_CONTROL_CLASS,
         );
         set_state(
             &self.screen,
@@ -331,7 +377,7 @@ impl CallDock {
                     "Share your screen"
                 },
             ),
-            "suggested-action",
+            CALL_ACTIVE_CONTROL_CLASS,
         );
         set_state(
             &self.camera,
@@ -344,24 +390,23 @@ impl CallDock {
                     "Turn the camera on"
                 },
             ),
-            "suggested-action",
+            CALL_ACTIVE_CONTROL_CLASS,
         );
         // Your own hand: the button reflects whether it is up, since you
         // cannot see yourself in the roster otherwise.
         let my_hand = call.hands.iter().any(|id| id == &st.me.id);
+        let (hand_icon, hand_tooltip, hand_flat) = hand_button_appearance(my_hand);
         set_state(
             &self.hand,
             my_hand,
-            (
-                "view-sort-descending-symbolic",
-                if my_hand {
-                    "Lower your hand"
-                } else {
-                    "Raise your hand"
-                },
-            ),
+            (hand_icon, hand_tooltip),
             "suggested-action",
         );
+        if hand_flat {
+            self.hand.add_css_class("flat");
+        } else {
+            self.hand.remove_css_class("flat");
+        }
         set_state(
             &self.record,
             call.recording,
@@ -490,11 +535,7 @@ impl CallDock {
                         ));
                     }
                     if call.hands.iter().any(|id| id == user_id) {
-                        controls.push((
-                            "view-sort-descending-symbolic",
-                            "Lower their hand",
-                            HostAction::LowerHand,
-                        ));
+                        controls.push((HAND_ICON_NAME, "Lower their hand", HostAction::LowerHand));
                     }
                     controls.push((
                         "emblem-default-symbolic",
@@ -509,10 +550,10 @@ impl CallDock {
 
                     for (icon, tooltip, action) in controls {
                         let button = gtk::Button::builder()
-                            .icon_name(icon)
                             .tooltip_text(tooltip)
                             .valign(gtk::Align::Center)
                             .build();
+                        apply_named_icon(&button, icon);
                         button.add_css_class("flat");
                         button.add_css_class("circular");
                         button.connect_clicked({
@@ -544,10 +585,8 @@ impl CallDock {
 }
 
 fn icon_button(icon: &str, tooltip: &str, on_click: impl Fn() + 'static) -> gtk::Button {
-    let button = gtk::Button::builder()
-        .icon_name(icon)
-        .tooltip_text(tooltip)
-        .build();
+    let button = gtk::Button::builder().tooltip_text(tooltip).build();
+    apply_named_icon(&button, icon);
     button.add_css_class("flat");
     button.add_css_class("circular");
     button.connect_clicked(move |_| on_click());
@@ -555,11 +594,78 @@ fn icon_button(icon: &str, tooltip: &str, on_click: impl Fn() + 'static) -> gtk:
 }
 
 fn set_state(button: &gtk::Button, on: bool, look: (&str, &str), class: &str) {
-    button.set_icon_name(look.0);
+    apply_named_icon(button, look.0);
     button.set_tooltip_text(Some(look.1));
     if on {
         button.add_css_class(class);
     } else {
         button.remove_css_class(class);
+    }
+}
+
+fn apply_named_icon(button: &gtk::Button, icon: &str) {
+    if icon == HAND_ICON_NAME
+        && gtk::gdk::Display::default()
+            .is_some_and(|display| !gtk::IconTheme::for_display(&display).has_icon(HAND_ICON_NAME))
+    {
+        button.set_icon_name("");
+        button.set_child(Some(&gtk::Label::new(Some("✋"))));
+    } else {
+        button.set_icon_name(icon);
+    }
+}
+
+fn hand_button_appearance(raised: bool) -> (&'static str, &'static str, bool) {
+    (
+        HAND_ICON_NAME,
+        if raised {
+            "Lower your hand"
+        } else {
+            "Raise your hand"
+        },
+        !raised,
+    )
+}
+
+#[cfg(test)]
+mod hand_button_tests {
+    use super::hand_button_appearance;
+
+    #[test]
+    fn raised_hand_uses_the_hand_icon_and_a_visible_active_button() {
+        assert_eq!(
+            hand_button_appearance(true),
+            ("hand-openyay-symbolic", "Lower your hand", false)
+        );
+    }
+
+    #[test]
+    fn lowered_hand_keeps_the_flat_raise_action() {
+        assert_eq!(
+            hand_button_appearance(false),
+            ("hand-openyay-symbolic", "Raise your hand", true)
+        );
+    }
+}
+
+#[cfg(test)]
+mod active_control_tests {
+    use super::CALL_ACTIVE_CONTROL_CLASS;
+
+    #[test]
+    fn active_call_controls_use_a_coloured_icon_without_a_white_suggested_action_fill() {
+        assert_eq!(CALL_ACTIVE_CONTROL_CLASS, "accent");
+    }
+}
+
+#[cfg(test)]
+mod dock_location_tests {
+    use super::dock_belongs_in_chat;
+
+    #[test]
+    fn mobile_dock_follows_the_visible_page() {
+        assert!(!dock_belongs_in_chat(true, false));
+        assert!(dock_belongs_in_chat(true, true));
+        assert!(!dock_belongs_in_chat(false, true));
     }
 }

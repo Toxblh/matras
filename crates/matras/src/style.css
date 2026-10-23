@@ -6,6 +6,21 @@
    properties. The `var(--name)` spelling only works from libadwaita 1.6, and
    this app targets 1.5. */
 
+/* The editor is a compact, rounded entry while remaining scrollable for
+   multiline Shift+Enter drafts. */
+.composer-entry,
+.thread-composer-entry {
+  background-color: @view_bg_color;
+  border: 1px solid alpha(@window_fg_color, 0.16);
+  border-radius: 12px;
+  padding: 0;
+}
+
+.composer-entry textview,
+.thread-composer-entry textview {
+  min-height: 26px;
+}
+
 /* ── channel list ──────────────────────────────────────────────────────
    Adwaita paints a sidebar row edge to edge, which reads as a stack of cards
    once every row has an avatar in it. Fractal's answer, copied here: strip the
@@ -334,6 +349,11 @@ link:visited {
 
 .message-row:hover .message-actions,
 .message-actions:focus-within {
+  opacity: 1;
+}
+
+/* Android puts these controls in a long-press popover. */
+.message-actions.message-actions-context {
   opacity: 1;
 }
 

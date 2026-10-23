@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Манифест Pixiewood для Matras. ЧЕРНОВИК — ни разу не прогонялся.
+  Образец: GeopJr/Tuba build-aux/android/pixiewood.xml и GNOME/gtk
+  build-aux/android/org.gtk.Demo4.xml.
+
+  Только aarch64: на слабой машине сборка всего GTK-стека на вторую арку
+  удваивает время без пользы для отладки. x86_64 добавить, когда поедет
+  (он же нужен для эмулятора на x86-хосте — тогда наоборот, оставить его).
+-->
+<app xmlns="https://sp1rit.arpa/pixiewood/" xmlns:xi="http://www.w3.org/2001/XInclude">
+  <metainfo vercalc="sem121010">
+    <!-- ВНИМАНИЕ: data/ru.toxblh.Matras.metainfo.xml обязан иметь
+         xmlns="https://specifications.freedesktop.org/metainfo/1.0",
+         иначе `pixiewood generate` упадёт с «Unable to find component id».
+         src://, не build://: наш metainfo лежит статикой в дереве исходников,
+         meson его не генерирует (в отличие от appdata у gtk-demo). -->
+    <xi:include href="src://data/ru.toxblh.Matras.metainfo.xml" parse="xml"/>
+  </metainfo>
+
+  <style>
+    <theme name="adw"/>
+    <icon type="generate">
+      <!-- Android-вариант: VectorDrawable не умеет <pattern>, простёжка
+           развёрнута в явные линии. Держать в синхроне с иконкой в data/. -->
+      <drawable target="foreground" scale=".5" type="svg"
+                path="src://build-aux/android/ru.toxblh.Matras.android-foreground.svg"/>
+      <color target="background">#FFFFFF</color>
+      <drawable target="monochrome" scale=".45" type="svg"
+                path="src://data/icons/hicolor/symbolic/apps/ru.toxblh.Matras-symbolic.svg"/>
+    </icon>
+  </style>
+
+  <dependencies>
+    <!-- hack: делает g_set_user_dirs публичным символом — его зовёт
+         gdkandroidruntime.c. Без него не соберётся.
+         pthread-restrictions: bionic не любит pthread_attr_setstacksize. -->
+    <glib>
+      <patch>hack</patch>
+      <patch>pthread-restrictions</patch>
+    </glib>
+    <fontconfig/>
+    <harfbuzz/>
+    <cairo/>
+    <gtk/>
+    <libadwaita/>
+  </dependencies>
+
+  <build target="ru.toxblh.Matras">
+    <architectures>
+      <arch>aarch64</arch>
+    </architectures>
+    <configure-options>
+      <!-- rustc с флагом target и линкером из NDK; pixiewood своего [binaries] rust не даёт -->
+      <option>--cross-file</option>
+      <option>build-aux/android/rust.cross</option>
+
+      <!-- видео и скриншеринг вне объёма первой сборки -->
+      <option>-Dvideo=disabled</option>
+
+      <!-- GTK на Android всё равно не умеет gstreamer:
+           «disabled until we have a mechanism to pass the JNIEnv* & Context» -->
+      <option>-Dgtk:media-gstreamer=disabled</option>
+      <option>-Dgtk:build-demos=false</option>
+      <option>-Dgtk:build-testsuite=false</option>
+      <option>-Dgtk:build-examples=false</option>
+      <option>-Dgtk:build-tests=false</option>
+      <option>-Dgtk:introspection=disabled</option>
+      <option>-Dgtk:documentation=false</option>
+      <option>-Dlibadwaita:examples=false</option>
+      <option>-Dlibadwaita:tests=false</option>
+      <option>-Dlibadwaita:introspection=disabled</option>
+      <option>-Dlibadwaita:documentation=false</option>
+      <option>-Dglib:tests=false</option>
+      <option>-Dglib:introspection=disabled</option>
+      <option>-Dharfbuzz:tests=disabled</option>
+      <option>-Dharfbuzz:docs=disabled</option>
+      <option>-Dharfbuzz:introspection=disabled</option>
+      <option>-Dcairo:tests=disabled</option>
+      <option>-Dfontconfig:tests=disabled</option>
+      <option>-Dfontconfig:doc=disabled</option>
+    </configure-options>
+  </build>
+</app>

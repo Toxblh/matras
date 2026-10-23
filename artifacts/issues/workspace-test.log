@@ -1,0 +1,249 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.99s
+     Running unittests src/lib.rs (target/debug/deps/matras-d3c034434ab29b00)
+
+running 140 tests
+test agents::tests::control_frames_are_start_end_or_noise ... ok
+test agents::tests::text_frames_carry_the_whole_message ... ok
+test audio::tests::a_frame_whose_slot_already_played_is_dropped ... ok
+test audio::tests::a_lost_frame_is_concealed_rather_than_stalling ... ok
+test audio::tests::a_restarted_stream_resyncs_instead_of_concealing_its_way_there ... ok
+test audio::tests::a_swapped_pair_is_put_back_in_order ... ok
+test audio::tests::frames_in_order_play_without_being_held ... ok
+test audio::tests::level_runs_from_silence_to_full_scale ... ok
+test audio::tests::sequence_numbers_wrap_without_stalling ... ok
+test background::tests::round_trips_and_defaults_to_on ... ok
+test demo::tests::demo_state_is_internally_consistent ... ok
+test demo::tests::dm_labels_resolve_to_the_other_person ... ok
+test demo::tests::the_demo_thread_starts_with_its_root ... ok
+test demo::tests::webhook_posts_use_their_override_name ... ok
+test emoji::tests::common_reactions_resolve_to_unicode ... ok
+test emoji::tests::custom_emoji_keep_their_colon_form ... ok
+test emoji::tests::every_quick_reaction_renders ... ok
+test emoji::tests::mattermost_only_names_resolve_through_the_alias_table ... ok
+test emoji::tests::skin_tone_variants_fall_back_to_the_base_emoji ... ok
+test markdown::tests::a_table_keeps_its_cells_on_their_rows ... ok
+test markdown::tests::an_unknown_mention_is_left_alone ... ok
+test markdown::tests::code_content_is_not_escaped_twice ... ok
+test markdown::tests::code_fences_come_out_as_their_own_block ... ok
+test markdown::tests::colons_that_are_not_shortcodes_are_left_alone ... ok
+test markdown::tests::inline_styles_become_pango_spans ... ok
+test markdown::tests::links_keep_their_target ... ok
+test markdown::tests::lists_are_indented_by_depth ... ok
+test markdown::tests::markup_in_a_message_is_never_markup ... ok
+test markdown::tests::plain_text_survives_unchanged ... ok
+test markdown::tests::shortcodes_become_emoji_and_mentions_are_linked ... ok
+test resource_cache::tests::lru_limit_is_a_physical_limit ... ok
+test resource_cache::tests::round_trip_and_collision_check ... ok
+test session::tests::round_trips_and_is_not_readable_by_anyone_else ... ok
+test state::tests::editing_a_post_replaces_it_in_place ... ok
+test state::tests::feed_keeps_posts_in_chronological_order ... ok
+test state::tests::from_list_reverses_the_servers_newest_first_order ... ok
+test state::tests::from_list_sorts_a_thread_the_server_left_unordered ... ok
+test state::tests::the_server_echo_replaces_our_optimistic_copy ... ok
+test store::tests::a_big_trim_gives_the_disk_space_back ... ok
+test store::tests::a_file_from_another_schema_is_thrown_away ... ok
+test store::tests::a_host_cannot_name_a_file_outside_the_directory ... ok
+test store::tests::deleting_the_database_leaves_nothing_behind ... ok
+test store::tests::posts_are_the_newest_few_but_read_oldest_first ... ok
+test store::tests::pruning_an_empty_store_is_not_an_error ... ok
+test store::tests::pruning_keeps_the_newest_few_of_every_channel ... ok
+test store::tests::rows_come_back_the_way_they_went_in ... ok
+test store::tests::saving_a_post_again_edits_it ... ok
+test ui::account::tests::never_is_zero ... ok
+test ui::account::tests::offsets_are_added_to_the_base ... ok
+test ui::account::tests::the_week_ends_on_sunday_night ... ok
+test ui::account::tests::today_ends_tonight ... ok
+test ui::autocomplete::tests::a_newline_starts_a_new_token ... ok
+test ui::autocomplete::tests::a_sigil_inside_a_word_is_not_a_token ... ok
+test ui::autocomplete::tests::completes_a_word_that_starts_with_a_sigil ... ok
+test ui::autocomplete::tests::text_after_the_cursor_is_not_part_of_the_token ... ok
+test ui::call_dock::dock_location_tests::mobile_dock_follows_the_visible_page ... ok
+test ui::call_dock::hand_button_tests::lowered_hand_keeps_the_flat_raise_action ... ok
+test ui::call_dock::hand_button_tests::raised_hand_uses_the_hand_icon_and_a_visible_active_button ... ok
+test ui::chat::tests::a_different_author_never_groups_even_seconds_apart ... ok
+test ui::chat::tests::a_gap_past_the_window_does_not_group ... ok
+test ui::chat::tests::compact_composer_menu_keeps_the_secondary_actions_available ... ok
+test ui::chat::tests::composer_entry_has_a_small_intrinsic_width_for_narrow_windows ... ok
+test ui::chat::tests::composer_is_one_line_high_and_uses_a_clear_send_affordance ... ok
+test ui::chat::tests::nothing_before_it_never_groups ... ok
+test ui::chat::tests::same_author_within_the_window_groups ... ok
+test ui::chat::tests::the_feed_only_shows_posts_that_belong_in_it ... ok
+test ui::dialogs::tests::next_monday_is_always_ahead ... ok
+test ui::dialogs::tests::slugs_are_url_safe ... ok
+test ui::dialogs::tests::unknown_levels_fall_back_to_the_first ... ok
+test ui::inbox_navigation_tests::opening_a_mention_in_the_current_channel_still_syncs_read_state ... ok
+test ui::lightbox::tests::suggested_name_is_always_a_png ... ok
+test ui::media::tests::a_faststart_head_has_a_full_moov ... ok
+test ui::media::tests::a_moov_box_cut_off_mid_atom_gives_up ... ok
+test ui::media::tests::a_streaming_unfriendly_head_gives_up ... ok
+test ui::media::tests::a_webm_head_is_always_playable ... ok
+test ui::media::tests::audio_is_told_apart_from_video ... ok
+test ui::media::tests::empty_or_garbage_is_not_playable ... ok
+test ui::media::tests::formats_gstreamer_will_not_have_are_excluded ... ok
+test ui::media::tests::nothing_to_go_on_is_not_playable ... ok
+test ui::media::tests::poster_overlay_is_aligned_to_its_clamped_child ... ok
+test ui::media::tests::the_extension_answers_when_the_mime_type_is_empty ... ok
+test ui::media::tests::the_mime_type_decides_when_there_is_one ... ok
+test ui::mention_tests::finds_by_surname_even_when_the_server_shows_usernames ... ok
+test ui::mention_tests::finds_mentions_and_ignores_addresses ... ok
+test ui::mention_tests::matches_inside_a_name_not_just_the_start ... ok
+test ui::mention_tests::ten_thousand_users_complete_instantly ... ok
+test ui::message::click_tests::a_small_wobble_is_a_click_a_real_drag_is_not ... ok
+test ui::message::expiry_tests::says_when_it_clears ... ok
+test ui::message::image_source_tests::a_small_sticker_stays_on_the_thumbnail_at_1x ... ok
+test ui::message::image_source_tests::an_ordinary_photo_always_wants_the_preview ... ok
+test ui::message::image_source_tests::no_preview_on_the_server_falls_back_to_the_thumbnail_regardless_of_size ... ok
+test ui::message::image_source_tests::the_same_sticker_needs_the_preview_at_2x ... ok
+test ui::message::permalink_tests::recognises_a_message_link ... ok
+test ui::message::reaction_tooltip_tests::one_named_reactor ... ok
+test ui::message::reaction_tooltip_tests::reactors_with_no_loaded_profile_become_a_trailing_count ... ok
+test ui::message::reaction_tooltip_tests::three_or_more_are_comma_joined_before_the_last_and ... ok
+test ui::message::reaction_tooltip_tests::two_named_reactors_get_an_and_not_a_comma ... ok
+test ui::message::responsive_width_tests::hidden_message_actions_do_not_set_the_message_row_minimum_width ... ok
+test ui::message::size_tests::fits_the_box_without_enlarging ... ok
+test ui::message::system_message_tests::a_bare_handle_gets_a_sigil_so_it_becomes_a_mention ... ok
+test ui::message::system_message_tests::a_handle_already_written_with_a_sigil_is_left_alone ... ok
+test ui::message::system_message_tests::a_join_message_reads_as_the_display_name_with_no_stray_at_and_a_working_link ... ok
+test ui::message::system_message_tests::a_run_combines_into_one_line_per_type_and_actor ... ok
+test ui::message::system_message_tests::combinable_types_are_exactly_the_ones_the_webapp_merges ... ok
+test ui::message::system_message_tests::mention_list_collapses_past_two_names ... ok
+test ui::message::system_message_tests::system_sentence_agrees_singular_and_plural ... ok
+test ui::message::system_message_tests::the_same_person_named_twice_in_a_run_is_not_duplicated ... ok
+test ui::message::tests::a_custom_shortcode_is_found_where_it_stands ... ok
+test ui::message::tests::colons_that_are_not_shortcodes_are_not_pictures ... ok
+test ui::message::tests::long_code_lines_scroll_without_widening_the_message_pane ... ok
+test ui::message::tests::markup_is_read_as_markup_and_not_as_prose ... ok
+test ui::message::word_tests::replaces_whole_words_only ... ok
+test ui::notify::tests::a_channel_set_to_default_defers_to_the_account ... ok
+test ui::notify::tests::a_direct_message_counts_as_a_mention ... ok
+test ui::notify::tests::a_muted_channel_only_notifies_for_mentions ... ok
+test ui::notify::tests::never_for_your_own_post_or_the_channel_you_are_reading ... ok
+test ui::notify::tests::system_messages_never_notify ... ok
+test ui::notify::tests::the_channel_setting_beats_the_account_setting ... ok
+test ui::notify::tests::the_default_is_mentions_only ... ok
+test ui::rhs::inbox_close_tests::a_window_close_dismisses_an_open_inbox ... ok
+test ui::rhs::inbox_close_tests::closing_another_panel_is_left_to_window_background_mode ... ok
+test ui::rhs::inbox_close_tests::the_inbox_uses_only_the_window_close_control ... ok
+test ui::rhs::inbox_tab_layout_tests::inbox_tabs_fit_a_narrow_sidebar ... ok
+test ui::shortcuts::tests::close_window_shortcut_is_ctrl_w_and_is_distinct_from_inbox ... ok
+test ui::shortcuts::tests::escape_returns_from_a_channel_to_the_empty_page ... ok
+test ui::shortcuts::tests::inbox_shortcut_does_not_steal_the_gtk_inspector ... ok
+test ui::shortcuts::tests::startup_stays_on_the_empty_page_instead_of_selecting_a_saved_channel ... ok
+test ui::sidebar::tests::a_mention_moves_the_revision_because_the_badge_counts ... ok
+test ui::sidebar::tests::account_presence_badges_scale_like_chat_avatar_badges ... ok
+test ui::sidebar::tests::becoming_unread_moves_the_revision ... ok
+test ui::sidebar::tests::channel_name_does_not_expand_status_emoji_away_from_name ... ok
+test ui::sidebar::tests::inbox_button_moves_between_desktop_sidebar_and_mobile_content ... ok
+test ui::sidebar::tests::more_of_the_same_unread_does_not_move_the_revision ... ok
+test ui::sidebar::tests::returning_to_collapsed_sidebar_clears_the_selected_channel ... ok
+test ui::sidebar::tests::returning_to_mobile_sidebar_closes_an_open_inbox_panel ... ok
+test ui::sso::tests::callback_parsing_and_token_shape ... ok
+test ui::storage::tests::formats_usage_for_people ... ok
+test ui::switcher::tests::nothing_to_move_from_lands_on_the_first_row ... ok
+test ui::switcher::tests::selection_wraps_at_both_ends ... ok
+test video::pipe::tests::every_pipeline_parses ... ok
+
+test result: ok. 140 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+
+     Running unittests src/main.rs (target/debug/deps/matras-df04a05af33883f3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/matras_testserver-5f2e535e5dcd4def)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mattermost_api-a9b67a23bb643c3f)
+
+running 22 tests
+test bootstrap::tests::alphabetical_sorting_pushes_muted_channels_last ... ok
+test bootstrap::tests::channel_selection_ignores_channels_we_are_not_in ... ok
+test bootstrap::tests::channel_selection_prefers_town_square_over_alphabetical ... ok
+test bootstrap::tests::falls_back_to_teams_order_then_alphabetical ... ok
+test bootstrap::tests::preferred_team_wins_when_still_joined ... ok
+test models::dialog::tests::parses_the_doubly_encoded_websocket_payload ... ok
+test models::dialog::tests::response_errors_keep_the_form_open ... ok
+test models::dialog::tests::submission_keeps_the_json_types_the_server_expects ... ok
+test models::post::null_tests::a_post_with_no_replies_decodes ... ok
+test models::post::tests::a_team_scheduled_post_response_parses ... ok
+test rest::ldapauth_tests::pulls_the_session_token_out_of_the_deep_link ... ok
+test rest::ldapauth_tests::reads_the_cookie_and_the_csrf_field ... ok
+test rest::tests::plugin_url_is_not_under_api_v4 ... ok
+test rest::tests::trailing_slash_is_trimmed ... ok
+test rest::tests::websocket_url_is_derived_from_site_url ... ok
+test tests::id_validation ... ok
+test ws::event::tests::plugin_events_fall_through_to_other ... ok
+test ws::event::tests::posted_unwraps_the_double_encoded_post ... ok
+test ws::event::tests::replies_are_distinguishable_from_events ... ok
+test ws::event::tests::typing_takes_the_channel_from_the_broadcast_envelope ... ok
+test ws::event::tests::user_updated_carries_a_real_object_not_a_string ... ok
+test ws::tests::backoff_is_flat_then_quadratic_and_capped ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running unittests src/lib.rs (target/debug/deps/mattermost_calls-633ad1a41f3b96bf)
+
+running 36 tests
+test client::tests::lock_release_is_a_noop_when_locking_is_unsupported ... ok
+test client::tests::reconnect_message_carries_both_ids ... ok
+test client::tests::sdp_frames_are_msgpack_maps_with_a_bin_payload ... ok
+test client::tests::the_lock_follows_server_version_not_dc_signalling ... ok
+test config::tests::channel_state_without_a_call_deserializes ... ok
+test config::tests::config_tolerates_null_lists ... ok
+test config::tests::config_uses_go_field_names_verbatim ... ok
+test config::tests::dc_locking_requires_both_plugin_and_rtcd_versions ... ok
+test dc::tests::floats_round_trip ... ok
+test dc::tests::lock_response_appends_a_msgpack_bool ... ok
+test dc::tests::media_map_round_trips ... ok
+test dc::tests::ping_is_exactly_one_byte ... ok
+test dc::tests::sdp_round_trips_through_zlib_and_msgpack ... ok
+test dc::tests::unknown_and_empty_messages_are_errors_not_panics ... ok
+test dc::tests::zlib_envelope_has_the_rfc1950_header ... ok
+test protocol::tests::action_names_are_plugin_namespaced ... ok
+test protocol::tests::call_state_maps_sessions_to_users ... ok
+test protocol::tests::join_message_uses_the_servers_camel_case_field_names ... ok
+test protocol::tests::malformed_track_ids_are_rejected ... ok
+test protocol::tests::sdp_payload_encodes_as_msgpack_bin_not_an_array ... ok
+test protocol::tests::signal_candidate_is_nested_one_level_deeper_than_sdp ... ok
+test protocol::tests::track_ids_split_into_type_and_session ... ok
+test rtc::tests::media_engine_registers_the_sfu_codec_set ... ok
+test rtc::tests::sdp_types_round_trip ... ok
+test rtc::tests::unknown_sdp_types_are_rejected ... ok
+test signaling::tests::call_state_unwraps_the_double_encoded_roster ... ok
+test signaling::tests::captions_carry_who_said_it ... ok
+test signaling::tests::dismissed_notification_carries_the_call_id ... ok
+test signaling::tests::join_ack_carries_our_session_id ... ok
+test signaling::tests::lowering_a_hand_reports_zero ... ok
+test signaling::tests::mute_events_use_the_camel_case_user_key ... ok
+test signaling::tests::non_calls_events_are_ignored ... ok
+test signaling::tests::signal_payload_is_an_uncompressed_json_string ... ok
+test signaling::tests::unknown_calls_events_are_preserved_not_dropped ... ok
+test signaling::tests::user_joined_uses_the_snake_case_user_key ... ok
+test signaling::tests::voice_events_map_to_speaking ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests matras
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mattermost_api
+
+running 1 test
+test crates/mattermost-api/src/lib.rs - (line 11) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+   Doc-tests mattermost_calls
+
+running 1 test
+test crates/mattermost-calls/src/lib.rs - (line 39) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+

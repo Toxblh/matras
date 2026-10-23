@@ -40,6 +40,28 @@ pub fn insecure() -> bool {
     })
 }
 
+/// The rustls config reqwest should use on Android.
+///
+/// reqwest 0.13's `rustls` feature verifies certificates through
+/// `rustls-platform-verifier`, which calls into Android's trust manager over a
+/// Kotlin/JNI shim. That shim is not on the classpath in a GTK-runtime APK, so
+/// the verifier never resolves and every HTTPS request hangs — a login spinner
+/// that never returns. Verifying against the bundled webpki roots keeps a
+/// public-CA server working without any Java side. The cost is that a private
+/// CA won't verify; `MM_INSECURE_TLS=1` remains the escape hatch for those.
+#[cfg(target_os = "android")]
+pub(crate) fn android_rustls_config() -> rustls::ClientConfig {
+    let roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+    };
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("aws-lc-rs supports the default protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+}
+
 /// The connector for [`tokio_tungstenite::connect_async_tls_with_config`].
 /// `None` means the default — verify normally.
 pub(crate) fn ws_connector() -> Option<tokio_tungstenite::Connector> {

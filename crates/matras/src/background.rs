@@ -36,7 +36,7 @@ impl Background {
 
     /// Whether running in the background is wanted at all. Defaults to true.
     pub fn enabled() -> bool {
-        read(&path()).unwrap_or(true)
+        enabled_at(&path())
     }
 
     // Nothing in this crate flips it yet — the preferences toggle lives in the
@@ -67,6 +67,10 @@ fn path() -> PathBuf {
     glib::user_config_dir()
         .join(crate::APP_ID)
         .join("settings.json")
+}
+
+fn enabled_at(file: &Path) -> bool {
+    read(file).unwrap_or(true)
 }
 
 fn read(file: &Path) -> Option<bool> {
@@ -120,23 +124,14 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("matras-background-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        // `path()` follows XDG, so point it somewhere disposable.
-        // SAFETY: single-threaded test, before any other thread reads the env.
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", &dir) };
-        assert!(Background::enabled(), "on unless it was turned off");
-
-        // The round trip itself goes through an explicit path rather than
-        // `path()`: GLib caches the user config dir on first use and the
-        // session test sets the same variable, so the two would otherwise
-        // share — and delete — one directory.
         let file = dir.join("settings.json");
-        assert_eq!(read(&file), None, "nothing stored yet");
+        assert!(enabled_at(&file), "on unless it was turned off");
 
         write(&file, false).unwrap();
-        assert_eq!(read(&file), Some(false));
+        assert!(!enabled_at(&file));
 
         write(&file, true).unwrap();
-        assert_eq!(read(&file), Some(true), "writing replaces, never appends");
+        assert!(enabled_at(&file), "writing replaces, never appends");
 
         // A key this version knows nothing about has to survive a write.
         fs::write(&file, r#"{"background":true,"future":42}"#).unwrap();

@@ -14,12 +14,23 @@ use crate::avatars::Avatars;
 use crate::state::SharedState;
 use crate::ui::message::{self, MessageActions, RowOptions};
 
+pub(super) const COMPOSER_MIN_CONTENT_HEIGHT: i32 = 28;
+const COMPOSER_SINGLE_LINE_HEIGHT: i32 = COMPOSER_MIN_CONTENT_HEIGHT;
+pub(super) const COMPOSER_MAX_CONTENT_HEIGHT: i32 = 108;
+const COMPOSER_OPTIONS_BUTTON_WIDTH: i32 = 34;
+const COMPOSER_SEND_ICON: &str = "mail-send-symbolic";
+
 pub(super) fn scroll_trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         std::env::var("MATRAS_SCROLL_TRACE")
             .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
     })
+}
+
+pub(super) fn composer_content_height(lines: i32) -> i32 {
+    (COMPOSER_MIN_CONTENT_HEIGHT + lines.saturating_sub(1) * 20)
+        .clamp(COMPOSER_MIN_CONTENT_HEIGHT, COMPOSER_MAX_CONTENT_HEIGHT)
 }
 
 /// Everything the conversation pane reports back to the action loop. A struct
@@ -322,6 +333,7 @@ impl ChatView {
             .tooltip_text("Mentions and threads")
             .build();
         inbox_button.add_css_class("flat");
+        inbox_button.set_visible(false);
         inbox_button.connect_clicked(move |_| on_inbox());
 
         let header = adw::HeaderBar::builder().title_widget(&title_box).build();
@@ -608,24 +620,18 @@ impl ChatView {
         let entry = gtk::TextView::builder()
             .wrap_mode(gtk::WrapMode::WordChar)
             .accepts_tab(false)
-            .top_margin(8)
-            .bottom_margin(8)
+            .height_request(COMPOSER_SINGLE_LINE_HEIGHT)
+            .top_margin(4)
+            .bottom_margin(4)
             .left_margin(8)
             .right_margin(8)
             .build();
 
-        let entry_frame = gtk::ScrolledWindow::builder()
-            .hexpand(true)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .min_content_height(40)
-            .max_content_height(160)
-            .propagate_natural_height(true)
-            .child(&entry)
-            .build();
-        entry_frame.add_css_class("card");
+        let entry_frame = build_composer_frame(&entry);
+        entry_frame.add_css_class("composer-entry");
 
         let send = gtk::Button::builder()
-            .icon_name("document-send-symbolic")
+            .icon_name(COMPOSER_SEND_ICON)
             .tooltip_text("Send  (Enter)")
             .valign(gtk::Align::End)
             .build();
@@ -640,48 +646,19 @@ impl ChatView {
         ] {
             priority_menu.append(Some(label), Some(&format!("composer.priority::{value}")));
         }
-        let priority = gtk::MenuButton::builder()
-            .icon_name("emblem-important-symbolic")
-            .tooltip_text("Message priority")
-            .menu_model(&priority_menu)
-            .valign(gtk::Align::End)
-            .build();
-        priority.add_css_class("flat");
-        priority.add_css_class("circular");
-
         let priority_action = gtk::gio::SimpleAction::new_stateful(
             "priority",
             Some(&String::static_variant_type()),
             &"standard".to_variant(),
         );
-        priority_action.connect_activate({
-            let priority = priority.clone();
-            move |action, target| {
-                let Some(value) = target.and_then(|t| t.get::<String>()) else {
-                    return;
-                };
-                // The button carries the current choice: a priority you set
-                // and cannot see is one you will send by accident.
-                priority.set_css_classes(&["flat", "circular"]);
-                match value.as_str() {
-                    "important" => priority.add_css_class("accent"),
-                    "urgent" => priority.add_css_class("error"),
-                    _ => {}
-                }
-                action.set_state(&value.to_variant());
-            }
+        priority_action.connect_activate(|action, target| {
+            let Some(value) = target.and_then(|t| t.get::<String>()) else {
+                return;
+            };
+            action.set_state(&value.to_variant());
         });
         let composer_actions = gtk::gio::SimpleActionGroup::new();
         composer_actions.add_action(&priority_action);
-
-        let attach = gtk::Button::builder()
-            .icon_name("mail-attachment-symbolic")
-            .tooltip_text("Attach a file")
-            .valign(gtk::Align::End)
-            .build();
-        attach.add_css_class("flat");
-        attach.add_css_class("circular");
-        attach.connect_clicked(move |_| on_attach());
 
         let composer = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
@@ -692,18 +669,22 @@ impl ChatView {
             .margin_end(12)
             .build();
         composer.insert_action_group("composer", Some(&composer_actions));
-        let schedule = gtk::Button::builder()
-            .icon_name("alarm-symbolic")
-            .tooltip_text("Send later")
-            .valign(gtk::Align::End)
-            .build();
-        schedule.add_css_class("flat");
-        schedule.add_css_class("circular");
-        schedule.connect_clicked(move |_| on_schedule());
 
-        composer.append(&attach);
-        composer.append(&priority);
-        composer.append(&schedule);
+        // Keep the high-frequency composer controls reachable without
+        // reserving three icon buttons at every viewport width. On a
+        // PinePhone those controls used more than 100px beside the text box;
+        // group them behind the familiar four-square action button instead.
+        let attach_action = gtk::gio::SimpleAction::new("attach", None);
+        attach_action.connect_activate(move |_, _| on_attach());
+        composer_actions.add_action(&attach_action);
+        let schedule_action = gtk::gio::SimpleAction::new("schedule", None);
+        schedule_action.connect_activate(move |_, _| on_schedule());
+        composer_actions.add_action(&schedule_action);
+
+        let options_menu = composer_options_menu(&priority_menu);
+        let options = composer_options_button(&options_menu);
+
+        composer.append(&options);
         composer.append(&entry_frame);
         composer.append(&send);
 
@@ -801,7 +782,10 @@ impl ChatView {
         let restoring = Rc::new(RefCell::new(false));
         entry.buffer().connect_changed({
             let restoring = restoring.clone();
+            let entry_frame = entry_frame.clone();
             move |buffer| {
+                let lines = buffer.line_count();
+                entry_frame.set_height_request(composer_content_height(lines));
                 // Restoring a draft is not typing, and must not be reported as
                 // either a keystroke or a fresh draft.
                 if *restoring.borrow() {
@@ -1248,6 +1232,10 @@ impl ChatView {
         } else {
             "Mentions and threads".to_string()
         }));
+    }
+
+    pub fn set_inbox_button_visible(&self, visible: bool) {
+        self.inbox_button.set_visible(visible);
     }
 
     /// Scrolls the feed so a particular message is in view and briefly
@@ -2005,6 +1993,33 @@ pub(super) fn scroll_list_to_newest(list: &gtk::ListView, items: u32, reason: &s
     });
 }
 
+fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
+    gtk::Frame::builder().hexpand(true).child(entry).build()
+}
+
+/// The compact composer menu keeps attachment, scheduling, and priority
+/// available while letting the message field use almost all of a phone width.
+fn composer_options_menu(priority_menu: &gtk::gio::Menu) -> gtk::gio::Menu {
+    let menu = gtk::gio::Menu::new();
+    menu.append(Some("Attach a file"), Some("composer.attach"));
+    menu.append(Some("Send later"), Some("composer.schedule"));
+    menu.append_submenu(Some("Message priority"), priority_menu);
+    menu
+}
+
+fn composer_options_button(menu: &gtk::gio::Menu) -> gtk::MenuButton {
+    let button = gtk::MenuButton::builder()
+        .icon_name("view-grid-symbolic")
+        .tooltip_text("More message options")
+        .menu_model(menu)
+        .valign(gtk::Align::End)
+        .width_request(COMPOSER_OPTIONS_BUTTON_WIDTH)
+        .build();
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button
+}
+
 struct HashWriter<'a>(&'a mut DefaultHasher);
 
 impl Write for HashWriter<'_> {
@@ -2281,5 +2296,40 @@ mod tests {
         };
         assert!(!ChatView::feed_shows(Some("c1"), &reply, true));
         assert!(ChatView::feed_shows(Some("c1"), &reply, false));
+    }
+
+    #[test]
+    fn composer_is_one_line_high_and_uses_a_clear_send_affordance() {
+        assert_eq!(COMPOSER_SINGLE_LINE_HEIGHT, 28);
+        assert_eq!(COMPOSER_MAX_CONTENT_HEIGHT, 108);
+        assert_eq!(composer_content_height(1), 28);
+        assert_eq!(composer_content_height(2), 48);
+        assert_eq!(composer_content_height(99), 108);
+        assert_eq!(COMPOSER_SEND_ICON, "mail-send-symbolic");
+    }
+
+    #[test]
+    fn compact_composer_menu_keeps_the_secondary_actions_available() {
+        let priorities = gtk::gio::Menu::new();
+        for label in ["Standard", "Important", "Urgent"] {
+            priorities.append(Some(label), None);
+        }
+        let menu = composer_options_menu(&priorities);
+        let model: &gtk::gio::MenuModel = menu.upcast_ref();
+
+        assert!(COMPOSER_OPTIONS_BUTTON_WIDTH <= 40);
+        assert_eq!(model.n_items(), 3);
+        assert_eq!(
+            model.item_attribute_value(0, "label", None).unwrap().str(),
+            Some("Attach a file")
+        );
+        assert_eq!(
+            model.item_attribute_value(1, "label", None).unwrap().str(),
+            Some("Send later")
+        );
+        assert_eq!(
+            model.item_attribute_value(2, "label", None).unwrap().str(),
+            Some("Message priority")
+        );
     }
 }
