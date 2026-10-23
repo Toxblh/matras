@@ -84,7 +84,7 @@ const HELP_OVERLAY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
             <child><object class="GtkShortcutsShortcut"><property name="title">Mentions and Threads</property><property name="action-name">win.inbox</property></object></child>
             <child><object class="GtkShortcutsShortcut"><property name="title">Next Unread Channel</property><property name="action-name">win.next-unread</property></object></child>
             <child><object class="GtkShortcutsShortcut"><property name="title">Previous Unread Channel</property><property name="action-name">win.previous-unread</property></object></child>
-            <child><object class="GtkShortcutsShortcut"><property name="title">Close Panel or Go Back</property><property name="action-name">win.close-panel</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Close Panel or Go Back</property><property name="accelerator">Escape</property></object></child>
           </object>
         </child>
         <child>

@@ -30,15 +30,17 @@ pub enum PanelMode {
     Search(String),
 }
 
-/// Whether the panel needs its own close control in addition to the window
-/// close button.
-pub fn explicit_close_visible(mode: &PanelMode) -> bool {
-    !matches!(mode, PanelMode::Inbox | PanelMode::Thread(_))
+/// Whether the panel is one the window close button dismisses: the inbox, or
+/// a thread laid over the conversation. A thread in its own column on a wide
+/// window is not covering anything, so the window button closes the window.
+pub fn window_close_dismisses_panel(mode: &PanelMode, overlaid: bool) -> bool {
+    overlaid && matches!(mode, PanelMode::Inbox | PanelMode::Thread(_))
 }
 
-/// Whether a window close request should dismiss the inbox panel first.
-pub fn window_close_dismisses_panel(mode: &PanelMode) -> bool {
-    matches!(mode, PanelMode::Inbox | PanelMode::Thread(_))
+/// Whether the panel needs its own close control in addition to the window
+/// close button.
+pub fn explicit_close_visible(mode: &PanelMode, overlaid: bool) -> bool {
+    !window_close_dismisses_panel(mode, overlaid)
 }
 
 /// Threads become an overlay when the window cannot comfortably hold three
@@ -58,6 +60,8 @@ pub struct RightPanel {
     /// pointer moves again. Redrawing only when this changes is what stops
     /// that.
     drawn: Cell<Option<u64>>,
+    /// Whether the panel is laid over the conversation rather than beside it.
+    overlaid: Cell<bool>,
     title: gtk::Label,
     subtitle: gtk::Label,
     stack: gtk::Stack,
@@ -232,10 +236,7 @@ impl RightPanel {
             .right_margin(8)
             .build();
         thread_entry.update_property(&[gtk::accessible::Property::Label("Reply")]);
-        let entry_frame = gtk::Frame::builder()
-            .hexpand(true)
-            .child(&thread_entry)
-            .build();
+        let entry_frame = chat::build_composer_frame(&thread_entry);
         entry_frame.add_css_class("thread-composer-entry");
 
         let send = gtk::Button::builder()
@@ -378,6 +379,7 @@ impl RightPanel {
             on_open_post: Rc::new(on_open_post),
             on_jump: Rc::new(on_jump),
             close,
+            overlaid: Cell::new(true),
         })
     }
 
@@ -392,8 +394,19 @@ impl RightPanel {
         // comes through here, which is what keeps the guard below meaningful.
         self.drawn.set(None);
         self.showing_thread.borrow_mut().take();
-        self.close.set_visible(explicit_close_visible(&mode));
+        self.close
+            .set_visible(explicit_close_visible(&mode, self.overlaid.get()));
         *self.mode.borrow_mut() = mode;
+    }
+
+    pub fn set_overlaid(&self, overlaid: bool) {
+        self.overlaid.set(overlaid);
+        self.close
+            .set_visible(explicit_close_visible(&self.mode.borrow(), overlaid));
+    }
+
+    pub fn overlaid(&self) -> bool {
+        self.overlaid.get()
     }
 
     /// Puts the thread at its newest reply because *you* answered. The rule
@@ -1262,28 +1275,40 @@ mod inbox_close_tests {
 
     #[test]
     fn the_inbox_uses_only_the_window_close_control() {
-        assert!(!explicit_close_visible(&PanelMode::Inbox));
+        assert!(!explicit_close_visible(&PanelMode::Inbox, true));
     }
 
     #[test]
-    fn a_thread_uses_only_the_window_close_control() {
-        assert!(!explicit_close_visible(&PanelMode::Thread("post".into())));
+    fn an_overlaid_thread_uses_only_the_window_close_control() {
+        assert!(!explicit_close_visible(
+            &PanelMode::Thread("post".into()),
+            true
+        ));
+    }
+
+    #[test]
+    fn a_thread_column_keeps_its_own_close_and_leaves_the_window_button_alone() {
+        let thread = PanelMode::Thread("post".into());
+        assert!(explicit_close_visible(&thread, false));
+        assert!(!window_close_dismisses_panel(&thread, false));
     }
 
     #[test]
     fn a_window_close_dismisses_an_open_inbox() {
-        assert!(window_close_dismisses_panel(&PanelMode::Inbox));
-        assert!(window_close_dismisses_panel(&PanelMode::Thread(
-            "post".into()
-        )));
+        assert!(window_close_dismisses_panel(&PanelMode::Inbox, true));
+        assert!(window_close_dismisses_panel(
+            &PanelMode::Thread("post".into()),
+            true
+        ));
     }
 
     #[test]
     fn closing_another_panel_is_left_to_window_background_mode() {
-        assert!(!window_close_dismisses_panel(&PanelMode::Hidden));
-        assert!(!window_close_dismisses_panel(&PanelMode::Search(
-            "post".into()
-        )));
+        assert!(!window_close_dismisses_panel(&PanelMode::Hidden, true));
+        assert!(!window_close_dismisses_panel(
+            &PanelMode::Search("post".into()),
+            true
+        ));
     }
 }
 

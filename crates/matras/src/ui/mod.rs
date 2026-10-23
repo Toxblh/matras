@@ -1154,7 +1154,7 @@ fn build_session_ui(
         let ui = ui.clone();
         move |window| {
             ui.save_snapshot();
-            if rhs::window_close_dismisses_panel(&ui.right.mode()) {
+            if rhs::window_close_dismisses_panel(&ui.right.mode(), ui.right.overlaid()) {
                 ui.dispatch(Action::CloseRightPanel);
                 return glib::Propagation::Stop;
             }
@@ -1213,7 +1213,6 @@ fn build_session_ui(
             ("win.quick-switch", &["<Control>k"][..]),
             ("win.search", &["<Control>f"]),
             ("win.inbox", shortcuts::INBOX_ACCELERATOR),
-            ("win.close-panel", &["Escape"]),
             ("win.new-channel", &["<Control>n"]),
             ("win.preferences", &["<Control>comma"]),
             ("win.next-unread", &["<Control><Shift>Down"]),
@@ -1222,6 +1221,17 @@ fn build_session_ui(
             app.set_accels_for_action(action, keys);
         }
     }
+
+    // Escape is not an application accelerator: those fire in the capture
+    // phase, ahead of the focused widget, so the key meant to close a mention
+    // popup, clear the search field or dismiss a dialog would leave the
+    // channel instead. In the bubble phase anything that wants it gets it first.
+    let escape = gtk::ShortcutController::new();
+    escape.add_shortcut(gtk::Shortcut::new(
+        gtk::ShortcutTrigger::parse_string("Escape"),
+        Some(gtk::NamedAction::new("win.close-panel")),
+    ));
+    window.add_controller(escape);
 
     // Clicking a notification lands here. The action is on the application so
     // it stays valid while the app is running, which is what the notification
@@ -5371,6 +5381,7 @@ impl Ui {
         let overlays =
             rhs::panel_should_overlay(self.narrow.get(), self.window.width(), &self.right.mode());
         self.overlay.set_collapsed(overlays);
+        self.right.set_overlaid(overlays);
     }
 
     /// Opens the card for a mention, which names a handle rather than an id.
@@ -5644,6 +5655,9 @@ impl Ui {
                 self.split.set_show_content(true);
                 self.chat.set_loading(false);
                 self.refresh_messages();
+                // The row keeps its ListBox selection otherwise, and clicking
+                // the channel just left would not emit `row-selected` again.
+                self.channels.refresh(&self.state, &self.avatars);
                 self.refresh_call_ui();
                 self.schedule_snapshot();
             }
@@ -5661,6 +5675,9 @@ impl Ui {
         // bottom of the cached block, moments before it was to be put back.
         if !already_open {
             self.capture_scroll_anchor();
+            // Priority belongs to the message being written here, not to the
+            // next one written anywhere.
+            self.chat.reset_priority();
         }
         // Flush the outgoing channel's draft *before* the composer is pointed
         // at a new one, or the text would be filed under the wrong channel.

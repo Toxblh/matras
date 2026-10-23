@@ -675,6 +675,25 @@ impl ChatView {
 
         let options_menu = composer_options_menu(&priority_menu);
         let options = composer_options_button(&options_menu);
+        // A priority you set and cannot see is one you send by accident, so the
+        // button that hides it takes its colour while it is not standard.
+        priority_action.connect_state_notify({
+            let options = options.clone();
+            move |action| {
+                let value = action.state().and_then(|s| s.get::<String>());
+                options.remove_css_class("accent");
+                options.remove_css_class("error");
+                let (class, tooltip) = match value.as_deref() {
+                    Some("important") => (Some("accent"), "More Message Options (Important)"),
+                    Some("urgent") => (Some("error"), "More Message Options (Urgent)"),
+                    _ => (None, "More Message Options"),
+                };
+                if let Some(class) = class {
+                    options.add_css_class(class);
+                }
+                options.set_tooltip_text(Some(tooltip));
+            }
+        });
 
         composer.append(&options);
         composer.append(&entry_frame);
@@ -2022,8 +2041,17 @@ pub(super) fn start_spinner_later(
     });
 }
 
-fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
-    gtk::Frame::builder().hexpand(true).child(entry).build()
+/// The frame draws the field; the scroller inside is what caps it. Without one
+/// a TextView's minimum height is all of its text, so a pasted log pushed the
+/// message list out of the window — `height_request` only sets a floor.
+pub(super) fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .max_content_height(COMPOSER_MAX_CONTENT_HEIGHT)
+        .child(entry)
+        .build();
+    gtk::Frame::builder().hexpand(true).child(&scroller).build()
 }
 
 /// The compact composer menu keeps attachment, scheduling, and priority
