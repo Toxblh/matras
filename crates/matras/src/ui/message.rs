@@ -1034,7 +1034,10 @@ fn attachment(
                     },
                     move |result| match result {
                         Ok(bytes) => player.set_data(bytes),
-                        Err(e) => tracing::warn!(error = %e, "could not fetch the media"),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "could not fetch the media");
+                            player.failed("Could not download the file");
+                        }
                     },
                 );
             })

@@ -523,8 +523,10 @@ impl Player {
     }
 
     /// Puts the play button back and says why nothing happened.
-    fn failed(&self, message: &str) {
+    pub fn failed(&self, message: &str) {
         tracing::warn!(message, "could not play the attachment");
+        self.spinner.stop();
+        self.spinner.set_visible(false);
         self.play.set_visible(true);
         self.body.append(&note(message));
     }
