@@ -497,6 +497,20 @@ mod tests {
     }
 
     #[test]
+    fn status_change_reads_status_and_user_from_data() {
+        let raw = r#"{"event":"status_change","data":{"status":"away","user_id":"u1"},
+                      "broadcast":{"user_id":"u1"},"seq":3}"#;
+        let frame: WsFrame = serde_json::from_str(raw).unwrap();
+        match Event::from_frame(&frame) {
+            Event::StatusChange { user_id, status } => {
+                assert_eq!(user_id, "u1");
+                assert_eq!(status, "away");
+            }
+            other => panic!("expected StatusChange, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn replies_are_distinguishable_from_events() {
         let reply: WsFrame = serde_json::from_str(r#"{"status":"OK","seq_reply":4}"#).unwrap();
         assert!(reply.is_reply());

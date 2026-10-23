@@ -547,11 +547,24 @@ async fn users_query(Query(q): Query<HashMap<String, String>>) -> Json<Value> {
 }
 
 async fn statuses(Json(ids): Json<Vec<String>>) -> Json<Value> {
+    // Lena drifts between online and away every `MM_AWAY_SECONDS` (default
+    // 90), and — exactly like the real server, which publishes status_change
+    // to that user's own sessions only — nobody else is told over the socket.
+    let period = std::env::var("MM_AWAY_SECONDS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|&s| s > 0)
+        .unwrap_or(90);
+    let lena = if (now() / 1000 / period) % 2 == 0 {
+        "online"
+    } else {
+        "away"
+    };
     Json(Value::Array(
         ids.iter()
             .map(|i| {
                 let status = match i.as_str() {
-                    LENA => "online",
+                    LENA => lena,
                     MIKK => "away",
                     SARA => "dnd",
                     _ => "online",
