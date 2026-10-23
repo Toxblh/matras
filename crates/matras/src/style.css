@@ -53,15 +53,15 @@
 /* Mixed against the foreground rather than fixed greys, so the pill follows
    the light/dark theme and the contrast setting on its own. */
 .channel-list > row:hover > .channel-row-background {
-  background-color: color-mix(in srgb, currentColor 7%, transparent);
+  background-color: alpha(currentColor, 0.07);
 }
 
 .channel-list > row:selected > .channel-row-background {
-  background-color: color-mix(in srgb, currentColor 10%, transparent);
+  background-color: alpha(currentColor, 0.10);
 }
 
 .channel-list > row:selected:hover > .channel-row-background {
-  background-color: color-mix(in srgb, currentColor 13%, transparent);
+  background-color: alpha(currentColor, 0.13);
 }
 
 /* Category headers are labels, not rows: no pill, ever. */
@@ -481,19 +481,19 @@ link:visited {
    Only the ring and the hollow offline fill — a coloured dot stays its colour.
    Hover first: on a hovered selected row the selected tint should win. */
 .navigation-sidebar row:hover .presence-badge {
-  border-color: color-mix(in srgb, @sidebar_fg_color 5%, @sidebar_bg_color);
+  border-color: mix(@sidebar_bg_color, @sidebar_fg_color, 0.05);
 }
 
 .navigation-sidebar row:hover .presence-badge.presence-offline {
-  background-color: color-mix(in srgb, @sidebar_fg_color 5%, @sidebar_bg_color);
+  background-color: mix(@sidebar_bg_color, @sidebar_fg_color, 0.05);
 }
 
 .navigation-sidebar row:selected .presence-badge {
-  border-color: color-mix(in srgb, @sidebar_fg_color 10%, @sidebar_bg_color);
+  border-color: mix(@sidebar_bg_color, @sidebar_fg_color, 0.10);
 }
 
 .navigation-sidebar row:selected .presence-badge.presence-offline {
-  background-color: color-mix(in srgb, @sidebar_fg_color 10%, @sidebar_bg_color);
+  background-color: mix(@sidebar_bg_color, @sidebar_fg_color, 0.10);
 }
 
 /* Remote screens and cameras, floating over the panes. Rounded and shadowed so
