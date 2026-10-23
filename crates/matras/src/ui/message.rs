@@ -1936,6 +1936,13 @@ fn reaction_strip(
         if mine {
             chip.add_css_class("mine");
         }
+        // The accent tint is the only thing that says "yours"; tell a screen
+        // reader too. The row is rebuilt when the reaction changes.
+        chip.update_state(&[gtk::accessible::State::Pressed(if mine {
+            gtk::AccessibleTristate::True
+        } else {
+            gtk::AccessibleTristate::False
+        })]);
         chip.connect_clicked({
             let actions = actions.clone();
             let post_id = post.id.clone();
