@@ -81,6 +81,9 @@ pub struct ChatView {
     /// Runs only while the first page is visibly loading. A permanently
     /// spinning child keeps GTK's frame clock alive even after Stack hides it.
     loading_spinner: gtk::Spinner,
+    /// Bumped whenever loading starts or ends, so a delayed spinner start
+    /// that belongs to an earlier wait does nothing.
+    spinner_epoch: Rc<Cell<u64>>,
     /// Which channel the feed currently holds, so a redraw can tell itself
     /// apart from a channel switch.
     showing: RefCell<Option<String>>,
@@ -924,6 +927,7 @@ impl ChatView {
             join_button,
             stack,
             loading_spinner: spinner,
+            spinner_epoch: Rc::new(Cell::new(0)),
             complete,
             priority_action,
             channel_button,
@@ -1782,6 +1786,12 @@ impl ChatView {
         }
     }
 
+    fn stop_loading_spinner(&self) {
+        self.spinner_epoch
+            .set(self.spinner_epoch.get().wrapping_add(1));
+        self.loading_spinner.stop();
+    }
+
     /// Redraws the whole feed for the current channel.
     pub fn refresh(&self, state: &SharedState, avatars: &Avatars, actions: &MessageActions) {
         let st = state.borrow();
@@ -1794,14 +1804,14 @@ impl ChatView {
         let Some(channel_id) = st.current_channel.clone() else {
             drop(st);
             self.set_inbox_count(inbox_count);
-            self.loading_spinner.stop();
+            self.stop_loading_spinner();
             self.stack.set_visible_child_name("empty");
             return;
         };
         let Some(channel) = st.channel(&channel_id).cloned() else {
             drop(st);
             self.set_inbox_count(inbox_count);
-            self.loading_spinner.stop();
+            self.stop_loading_spinner();
             self.stack.set_visible_child_name("empty");
             return;
         };
@@ -1810,10 +1820,15 @@ impl ChatView {
         // with no posts and nothing in flight is genuinely empty.
         let waiting =
             *self.loading.borrow() && st.feeds.get(&channel_id).is_none_or(|f| f.posts.is_empty());
-        if waiting {
-            self.loading_spinner.start();
-        } else {
-            self.loading_spinner.stop();
+        if !waiting {
+            self.stop_loading_spinner();
+        } else if self.stack.visible_child_name().as_deref() != Some("loading") {
+            let epoch = self.spinner_epoch.get().wrapping_add(1);
+            self.spinner_epoch.set(epoch);
+            start_spinner_later(&self.loading_spinner, {
+                let current = self.spinner_epoch.clone();
+                move || current.get() == epoch
+            });
         }
         self.stack
             .set_visible_child_name(if waiting { "loading" } else { "conversation" });
@@ -1997,6 +2012,24 @@ pub(super) fn scroll_list_to_newest(list: &gtk::ListView, items: u32, reason: &s
             glib::ControlFlow::Break
         } else {
             glib::ControlFlow::Continue
+        }
+    });
+}
+
+/// How long a first load may take before a spinner says so. A faster answer
+/// shows no spinner at all instead of a flash of one.
+pub(super) const SPINNER_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Starts `spinner` after [`SPINNER_DELAY`], if it still exists and
+/// `still_waiting` says the wait is not over.
+pub(super) fn start_spinner_later(
+    spinner: &gtk::Spinner,
+    still_waiting: impl Fn() -> bool + 'static,
+) {
+    let spinner = spinner.downgrade();
+    glib::timeout_add_local_once(SPINNER_DELAY, move || {
+        if let Some(spinner) = spinner.upgrade().filter(|_| still_waiting()) {
+            spinner.start();
         }
     });
 }

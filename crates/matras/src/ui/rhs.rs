@@ -505,7 +505,7 @@ impl RightPanel {
                 .halign(gtk::Align::Center)
                 .margin_top(24)
                 .build();
-            spinner.start();
+            chat::start_spinner_later(&spinner, || true);
             self.search_list.append(&spinner);
             return;
         }
@@ -775,11 +775,14 @@ impl RightPanel {
         let st = state.borrow();
 
         if st.mentions.is_empty() {
-            add_placeholder(&self.mentions_list, &empty_state(
-                "mail-unread-symbolic",
-                "No Recent Mentions",
-                "Messages that name you show up here",
-            ));
+            add_placeholder(
+                &self.mentions_list,
+                &empty_state(
+                    "mail-unread-symbolic",
+                    "No Recent Mentions",
+                    "Messages that name you show up here",
+                ),
+            );
         }
         for post in &st.mentions {
             let channel = st
@@ -826,11 +829,14 @@ impl RightPanel {
         saved.dedup_by_key(|p| p.id.clone());
 
         if saved.is_empty() {
-            add_placeholder(&self.saved_list, &empty_state(
-                "starred-symbolic",
-                "No Saved Messages",
-                "Save a message from its menu and it waits here",
-            ));
+            add_placeholder(
+                &self.saved_list,
+                &empty_state(
+                    "starred-symbolic",
+                    "No Saved Messages",
+                    "Save a message from its menu and it waits here",
+                ),
+            );
         }
         for post in saved {
             let channel = st
@@ -862,11 +868,14 @@ impl RightPanel {
         }
 
         if st.thread_inbox.is_empty() {
-            add_placeholder(&self.threads_list, &empty_state(
-                "chat-message-new-symbolic",
-                "No Threads Yet",
-                "Threads you follow appear here",
-            ));
+            add_placeholder(
+                &self.threads_list,
+                &empty_state(
+                    "chat-message-new-symbolic",
+                    "No Threads Yet",
+                    "Threads you follow appear here",
+                ),
+            );
         }
         for thread in &st.thread_inbox {
             let author = st.author_name(&thread.post);
@@ -961,11 +970,21 @@ fn thread_item(store: &gtk::gio::ListStore, position: u32) -> Option<ThreadItem>
 
 fn render_thread_item(item: &ThreadItem, context: &RenderContext) -> gtk::Widget {
     match item {
-        ThreadItem::Loading => adw::StatusPage::builder()
-            .title("Loading Thread…")
-            .vexpand(true)
-            .build()
-            .upcast(),
+        ThreadItem::Loading => {
+            let spinner = gtk::Spinner::builder()
+                .width_request(32)
+                .height_request(32)
+                .halign(gtk::Align::Center)
+                .build();
+            // Dropped with the row when the thread arrives first.
+            chat::start_spinner_later(&spinner, || true);
+            adw::StatusPage::builder()
+                .title("Loading Thread…")
+                .child(&spinner)
+                .vexpand(true)
+                .build()
+                .upcast()
+        }
         ThreadItem::Divider(text) => message::day_separator(text),
         ThreadItem::Post { post, grouped, .. } => message::build(
             post,
