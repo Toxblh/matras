@@ -5730,6 +5730,7 @@ impl Ui {
             // may take a while and the reader should not be looking at "this
             // is the beginning of…" in the meantime.
             self.refresh_messages();
+            self.show_cached_posts(&channel_id);
             let id = channel_id.clone();
             let fetch_client = client.clone();
             runtime::spawn(
@@ -5805,6 +5806,56 @@ impl Ui {
         // Tell the server we are looking at this channel so read state syncs to
         // our other sessions.
         self.mark_channel_viewed(channel_id, client, crt);
+    }
+
+    /// Puts the channel's posts from the local store on screen while the
+    /// server is still being asked, so a slow network shows last time's
+    /// conversation instead of a spinner. The feed is left short of
+    /// `at_latest`, and whichever answer lands second never replaces the server's.
+    fn show_cached_posts(self: &Rc<Self>, channel_id: &str) {
+        if self.state.borrow().feeds.contains_key(channel_id) {
+            return;
+        }
+        let Some(store) = self.store.borrow().clone() else {
+            return;
+        };
+        let channel_id = channel_id.to_string();
+        let anchor = self.state.borrow().scroll_anchors.get(&channel_id).cloned();
+        let ui = self.clone();
+        runtime::spawn(
+            async move {
+                let posts = match anchor.as_deref() {
+                    Some(post_id) => match store.posts_around(&channel_id, post_id, 10, 10).await {
+                        Ok(posts) if !posts.is_empty() => Ok(posts),
+                        Ok(_) => store.posts(&channel_id, INITIAL_POSTS as usize).await,
+                        Err(error) => Err(error),
+                    },
+                    None => store.posts(&channel_id, INITIAL_POSTS as usize).await,
+                };
+                (channel_id, anchor, posts)
+            },
+            move |(channel_id, anchor, posts)| {
+                let Ok(posts) = posts else { return };
+                if posts.is_empty() {
+                    return;
+                }
+                {
+                    let mut st = ui.state.borrow_mut();
+                    if st.feeds.contains_key(&channel_id) {
+                        return;
+                    }
+                    st.feeds
+                        .insert(channel_id.clone(), ChannelFeed::from_posts(posts));
+                    if st.current_channel.as_deref() != Some(channel_id.as_str()) {
+                        return;
+                    }
+                }
+                ui.refresh_messages();
+                if let Some(anchor) = anchor {
+                    ui.chat.restore_anchor(&anchor);
+                }
+            },
+        );
     }
 
     /// Sync the current read position to Mattermost and clear the local unread

@@ -456,11 +456,23 @@ fn post_list(app: &App, filter: impl Fn(&Value) -> bool) -> Value {
     })
 }
 
+/// `MM_POSTS_DELAY_MS` slows the channel post fetches, to see what the client
+/// shows while it waits on a slow network.
+async fn posts_delay() {
+    if let Some(ms) = std::env::var("MM_POSTS_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    }
+}
+
 async fn channel_posts(
     State(app): State<Arc<App>>,
     Path(channel_id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Json<Value> {
+    posts_delay().await;
     let since: i64 = q.get("since").and_then(|s| s.parse().ok()).unwrap_or(0);
     let crt = q.get("collapsedThreads").map(String::as_str) == Some("true");
     let before = q.get("before").map(String::as_str);
@@ -514,6 +526,7 @@ async fn unread_posts(
     Path(channel_id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Json<Value> {
+    posts_delay().await;
     let crt = q.get("collapsedThreads").map(String::as_str) == Some("true");
     Json(post_list(&app, |p| {
         p["channel_id"] == channel_id.as_str()
