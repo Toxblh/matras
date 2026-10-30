@@ -383,7 +383,7 @@ fn dev_channel_feed() -> ChannelFeed {
         "p-11",
         BASE + 2_000_000,
         serde_json::json!({
-            "call_id": "call_demo_2", "state": "ACTIVE",
+            "call_id": "call_demo_2", "state": "ACTIVE", "pin": "7376",
             "participant_names": "Lena Petrova, Anton Palgunov"
         }),
     ));

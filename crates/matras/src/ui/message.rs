@@ -906,6 +906,12 @@ fn call_card(
     if !card.participants.is_empty() {
         text.append(&line(&card.participants.join(", "), &["caption"]));
     }
+    // Only while it runs: an ended call's PIN dials nothing.
+    if let Some(pin) = card.pin.as_deref().filter(|_| card.live) {
+        let label = line(&format!("PIN {pin}"), &["caption", "numeric"]);
+        label.set_selectable(true);
+        text.append(&label);
+    }
     if !card.missed.is_empty() {
         text.append(&line(
             &format!("Missed: {}", card.missed.join(", ")),

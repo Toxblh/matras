@@ -18,6 +18,8 @@ pub struct CallCard {
     /// People who were rung and did not pick up, once each.
     pub missed: Vec<String>,
     pub recording_url: Option<String>,
+    /// The code for dialling in by phone or from a meeting room.
+    pub pin: Option<String>,
 }
 
 impl CallCard {
@@ -63,6 +65,7 @@ impl CallCard {
             participants: names(prop("participant_names")),
             missed,
             recording_url: Some(prop("recording_url")).filter(|u| !u.is_empty()),
+            pin: Some(prop("pin")).filter(|p| !p.is_empty()),
             call_id,
         })
     }
@@ -96,6 +99,7 @@ mod tests {
         assert!(c.participants.is_empty());
         assert_eq!(c.missed, ["Evgeny Sinelnikov", "Андрей Лимачко"]);
         assert!(c.recording_url.is_some());
+        assert_eq!(c.pin.as_deref(), Some("7654"));
     }
 
     #[test]
