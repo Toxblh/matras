@@ -1249,7 +1249,7 @@ fn build_session_ui(
         store: RefCell::new(None),
         typing_sent_recently: std::cell::Cell::new(false),
         completion_generation: std::cell::Cell::new(0),
-        avatar_redraw_pending: std::cell::Cell::new(false),
+        avatar_redraw_pending: RefCell::default(),
         mention_query_pending: std::cell::Cell::new(false),
         mention_query: RefCell::new(None),
         last_completions: RefCell::new(Vec::new()),
@@ -1502,16 +1502,27 @@ fn build_session_ui(
                 ui.refresh_completion_avatars();
                 return;
             }
-            if ui.avatar_redraw_pending.replace(true) {
+            // Batched, but every key in the batch is redrawn. Keeping only the
+            // first one dropped the rest: an emoji landing a moment before a
+            // picture left the picture's row empty — a white gap — until
+            // something else happened to rebuild it.
+            let mut pending = ui.avatar_redraw_pending.borrow_mut();
+            let first = pending.is_empty();
+            if !pending.iter().any(|k| k == key) {
+                pending.push(key.to_string());
+            }
+            drop(pending);
+            if !first {
                 return;
             }
             let ui = ui.clone();
-            let key = key.to_string();
             glib::timeout_add_local_once(AVATAR_REDRAW_WAIT, move || {
-                ui.avatar_redraw_pending.set(false);
+                let keys = ui.avatar_redraw_pending.take();
                 let actions = ui.message_actions();
-                ui.chat
-                    .refresh_resource(&key, &ui.state, &ui.avatars, &actions);
+                for key in &keys {
+                    ui.chat
+                        .refresh_resource(key, &ui.state, &ui.avatars, &actions);
+                }
                 ui.right.refresh(&ui.state, &ui.avatars, &actions);
             });
         }
@@ -1582,8 +1593,8 @@ struct Ui {
     /// person has already typed past is discarded rather than replacing the
     /// list under them.
     completion_generation: std::cell::Cell<u64>,
-    /// Set while a redraw for freshly-landed pictures is already booked.
-    avatar_redraw_pending: std::cell::Cell<bool>,
+    /// Keys of freshly landed pictures waiting for the one booked redraw.
+    avatar_redraw_pending: RefCell<Vec<String>>,
     /// Set while a debounced `@mention` network lookup is scheduled; further
     /// keystrokes just overwrite `mention_query` instead of scheduling again.
     mention_query_pending: std::cell::Cell<bool>,

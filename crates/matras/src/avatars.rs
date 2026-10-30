@@ -234,6 +234,22 @@ impl Avatars {
         inner.trim();
     }
 
+    /// Records that a video's head cannot make a still — its index sits after
+    /// the media, or the codec is missing — and lets the bytes go.
+    ///
+    /// Without this the head stayed wanted for ever: the small head cache
+    /// evicted it for another clip's, the row asked again, the answer came
+    /// back from disk at once and rebuilt the row, which evicted the next
+    /// one. A channel with more clips than the cache holds rebuilt its video
+    /// rows several times a second, each time with a fresh decoder — the
+    /// blinking first video.
+    pub fn no_still(&self, file_id: &str) {
+        let key = format!("{VIDEO_HEAD_PREFIX}{file_id}");
+        let mut inner = self.inner.borrow_mut();
+        inner.heads.remove(&key);
+        inner.failed.insert(key);
+    }
+
     pub fn video_head(&self, file_id: &str) -> Option<Rc<Vec<u8>>> {
         // The prefix belongs in the lookup as well as the fetch. Without it
         // the hit never happened: every redraw asked again, every answer

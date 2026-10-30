@@ -1169,17 +1169,28 @@ fn attachment(
             ImageSource::Preview => avatars.file_preview(&file.id),
             ImageSource::Thumbnail => avatars.file_thumbnail(&file.id),
         };
-        if let Some(texture) = texture {
-            picture.set_paintable(Some(&texture));
+        match texture {
+            Some(texture) => picture.set_paintable(Some(&texture)),
+            // Still on its way: an empty paintable of the picture's own shape,
+            // so the box is as wide as the picture will be and reads as a
+            // picture loading, not a hole in the conversation.
+            None => {
+                picture.set_paintable(Some(&gtk::gdk::Paintable::new_empty(width, height)));
+                picture.add_css_class("loading");
+            }
         }
 
         let sized = adw::Clamp::builder()
             .maximum_size(width)
+            .tightening_threshold(width)
             .halign(gtk::Align::Start)
             .child(&picture)
             .build();
 
-        let open = gtk::Button::builder().child(&sized).build();
+        let open = gtk::Button::builder()
+            .child(&sized)
+            .halign(gtk::Align::Start)
+            .build();
         open.add_css_class("flat");
         open.add_css_class("attachment-button");
         open.connect_clicked({
@@ -1210,15 +1221,24 @@ fn attachment(
                     .poster(&file.id)
                     .map(|texture| (texture.upcast(), std::path::PathBuf::new()))
                     .or_else(|| {
-                        avatars
-                            .video_head(&file.id)
-                            .and_then(|head| super::media::video_still(file, head.as_slice()))
+                        let head = avatars.video_head(&file.id)?;
+                        let still = super::media::video_still(file, head.as_slice());
+                        if still.is_none() {
+                            // Settled: this head will never make a still, so
+                            // it must not be fetched again either (see
+                            // `Avatars::no_still`).
+                            avatars.no_still(&file.id);
+                        }
+                        still
                     })
             };
             let keep = {
                 let avatars = avatars.clone();
                 let id = file.id.clone();
-                move |texture| avatars.remember_poster(&id, texture)
+                move |texture: Option<gtk::gdk::Texture>| match texture {
+                    Some(texture) => avatars.remember_poster(&id, texture),
+                    None => avatars.no_still(&id),
+                }
             };
             super::media::Player::new(file, poster, keep, move |file_id| {
                 let Some(player) = weak.upgrade() else { return };

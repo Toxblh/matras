@@ -194,6 +194,12 @@ link:visited {
   margin-top: 4px;
 }
 
+/* An attached picture still loading: its own size, faintly filled. */
+.attachment-image.loading {
+  background-color: alpha(currentColor, 0.06);
+  border-radius: 8px;
+}
+
 /* A gomon call card: the icon sits in a disc, green while the call runs. */
 .call-card {
   padding: 10px 12px;

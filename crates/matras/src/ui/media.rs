@@ -251,11 +251,11 @@ impl Player {
     /// was not in the head, or this is audio).
     /// `on_still` is handed the first frame once the decoder has produced it,
     /// so it can be kept and the decoder let go; see the comment where it is
-    /// called.
+    /// called. `None` means the decoder never got there.
     pub fn new(
         file: &FileInfo,
         poster: Option<(gtk::gdk::Paintable, PathBuf)>,
-        on_still: impl Fn(gtk::gdk::Texture) + 'static,
+        on_still: impl Fn(Option<gtk::gdk::Texture>) + 'static,
         on_load: impl Fn(String) + 'static,
     ) -> Player {
         let (poster_image, poster_temp) = match poster {
@@ -325,9 +325,9 @@ impl Player {
                         // decoder that never got there, not a still.
                         if frame.intrinsic_width() > 1 && frame.intrinsic_height() > 1 {
                             still.set_paintable(Some(&frame));
-                            if let Ok(texture) = frame.downcast::<gtk::gdk::Texture>() {
-                                on_still(texture);
-                            }
+                            on_still(frame.downcast::<gtk::gdk::Texture>().ok());
+                        } else {
+                            on_still(None);
                         }
                     });
                 }
