@@ -700,15 +700,29 @@ impl ChatView {
         composer.append(&entry_frame);
         composer.append(&send);
 
+        // Uploaded files wait here until a message carries them.
+        let attachments = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(6)
+            .margin_start(14)
+            .margin_end(14)
+            .margin_bottom(4)
+            .visible(false)
+            .build();
+
         let on_send = Rc::new(on_send);
         let submit = {
             let entry = entry.clone();
             let on_send = on_send.clone();
+            let attachments = attachments.clone();
             move || {
                 let buffer = entry.buffer();
                 let (start, end) = buffer.bounds();
                 let text = buffer.text(&start, &end, false).trim().to_string();
-                if text.is_empty() {
+                // A pasted picture with nothing to say about it is a message:
+                // the chips — uploaded or still on their way — are what
+                // decide, not the text.
+                if text.is_empty() && !attachments.is_visible() {
                     return;
                 }
                 buffer.set_text("");
@@ -826,16 +840,6 @@ impl ChatView {
                 on_typing(buffer.char_count() > 0);
             }
         });
-
-        // Uploaded files wait here until a message carries them.
-        let attachments = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(6)
-            .margin_start(14)
-            .margin_end(14)
-            .margin_bottom(4)
-            .visible(false)
-            .build();
 
         let editing: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 

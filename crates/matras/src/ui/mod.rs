@@ -1252,6 +1252,8 @@ fn build_session_ui(
         typing_sent_recently: std::cell::Cell::new(false),
         completion_generation: std::cell::Cell::new(0),
         avatar_redraw_pending: RefCell::default(),
+        uploads_in_flight: std::cell::Cell::new(0),
+        send_after_upload: RefCell::default(),
         mention_query_pending: std::cell::Cell::new(false),
         mention_query: RefCell::new(None),
         last_completions: RefCell::new(Vec::new()),
@@ -1597,6 +1599,11 @@ struct Ui {
     completion_generation: std::cell::Cell<u64>,
     /// Keys of freshly landed pictures waiting for the one booked redraw.
     avatar_redraw_pending: RefCell<Vec<String>>,
+    /// Attachments still on their way to the server.
+    uploads_in_flight: std::cell::Cell<usize>,
+    /// A message sent before its attachments finished uploading, held until
+    /// they have.
+    send_after_upload: RefCell<Option<String>>,
     /// Set while a debounced `@mention` network lookup is scheduled; further
     /// keystrokes just overwrite `mention_query` instead of scheduling again.
     mention_query_pending: std::cell::Cell<bool>,
@@ -4362,7 +4369,16 @@ impl Ui {
                     }
                     Err(e) => ui.toast(&format!("Could not attach {label}: {e}")),
                 }
+                ui.uploads_in_flight
+                    .set(ui.uploads_in_flight.get().saturating_sub(1));
                 ui.refresh_attachments();
+                // Enter was pressed while this was still uploading: the
+                // message was held for it, and goes now that all are in.
+                if ui.uploads_in_flight.get() == 0 {
+                    if let Some(text) = ui.send_after_upload.take() {
+                        ui.send_message(text, None);
+                    }
+                }
             },
         );
     }
@@ -5897,6 +5913,8 @@ impl Ui {
                     return;
                 };
                 self.chat.set_uploading(paths.len());
+                self.uploads_in_flight
+                    .set(self.uploads_in_flight.get() + paths.len());
                 for path in paths {
                     self.upload(&channel_id, path);
                 }
@@ -6538,6 +6556,13 @@ impl Ui {
     // ---------------------------------------------------------------- posting
 
     fn send_message(self: &Rc<Self>, text: String, root_id: Option<String>) {
+        // Sent while a file is still uploading — paste, Enter. The file is
+        // part of the message, so the message waits for it rather than going
+        // without it.
+        if root_id.is_none() && self.uploads_in_flight.get() > 0 {
+            self.send_after_upload.replace(Some(text));
+            return;
+        }
         let (client, channel_id, me, file_ids) = {
             let mut st = self.state.borrow_mut();
             let channel = match &root_id {
