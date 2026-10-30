@@ -7818,7 +7818,15 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                                     break; // the window went away
                                 }
                             }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            // Events were dropped on the floor, and any of
+                            // them could have been a message: catch up the
+                            // way a failed resume does.
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!(n, "websocket events dropped; resyncing");
+                                if tx.send(WsUpdate::MissedMessages).await.is_err() {
+                                    break;
+                                }
+                            }
                             Err(_) => break,
                         }
                     }

@@ -253,7 +253,12 @@ impl Event {
             },
             "posted" => match Posted::parse(d) {
                 Some(p) => Event::Posted(p),
-                None => Event::other(frame),
+                None => {
+                    tracing::warn!(
+                        "a posted event did not parse; the message waits for the next fetch"
+                    );
+                    Event::other(frame)
+                }
             },
             // A scheduled post was created, sent or cancelled somewhere, and
             // a bookmark likewise. Neither carries a usable delta for us, so
