@@ -61,14 +61,17 @@
 //!
 //! [Mattermost Calls]: https://github.com/mattermost/mattermost-plugin-calls
 
+pub mod active;
 pub mod client;
 pub mod config;
 pub mod dc;
 pub mod error;
+pub mod gomon;
 pub mod protocol;
 pub mod rtc;
 pub mod signaling;
 
+pub use active::AnyCall;
 pub use client::{write_audio_sample, CallSession, CallUpdate, JoinOptions};
 pub use config::{
     decline, discover, dismiss_notification, host_control, set_recording, CallsConfig,

@@ -194,6 +194,22 @@ link:visited {
   margin-top: 4px;
 }
 
+/* A gomon call card: the icon sits in a disc, green while the call runs. */
+.call-card {
+  padding: 10px 12px;
+  margin-top: 4px;
+}
+.call-card-icon {
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 18px;
+  background-color: alpha(currentColor, 0.1);
+}
+.call-card-icon.live {
+  color: @success_fg_color;
+  background-color: @success_bg_color;
+}
+
 /* The message a search hit or an inbox entry pointed at. Fades on its own:
    it answers "which one" and then stops mattering. */
 .message-highlight {

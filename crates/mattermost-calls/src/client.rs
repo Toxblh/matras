@@ -1001,7 +1001,7 @@ fn send_sdp_over_ws(ws: &WebSocket, sdp: &SessionDescription) -> Result<()> {
     Ok(())
 }
 
-fn spawn_rtcp_drain(sender: Arc<RTCRtpSender>) {
+pub(crate) fn spawn_rtcp_drain(sender: Arc<RTCRtpSender>) {
     tokio::spawn(async move {
         let mut buf = vec![0u8; 1500];
         while sender.read(&mut buf).await.is_ok() {}

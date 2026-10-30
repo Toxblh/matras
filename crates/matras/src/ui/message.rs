@@ -136,6 +136,8 @@ pub enum PostAction {
     History,
     /// Move this thread to another channel.
     MoveThread,
+    /// Join the gomon call this card is about.
+    JoinCall,
     /// Confirm you have read a priority message, or take it back.
     Acknowledge,
     Unacknowledge,
@@ -285,8 +287,14 @@ pub fn build(
                 .filter(|name| !name.is_empty())
         }
     };
-    for block in crate::markdown::parse_with(&post.message, &known) {
-        body.append(&render_block(block, avatars, actions));
+    // A gomon call card says everything its text does and more; the text is
+    // the plugin's fallback for clients that cannot draw the card.
+    if let Some(card) = crate::gomon::CallCard::from_post(post) {
+        body.append(&call_card(&post.id, &card, actions));
+    } else {
+        for block in crate::markdown::parse_with(&post.message, &known) {
+            body.append(&render_block(block, avatars, actions));
+        }
     }
 
     if post.is_edited() {
@@ -850,6 +858,99 @@ fn attachment_card(
     row.add_css_class("attachment-card");
     row.append(&stripe);
     row.append(&content);
+    row.upcast()
+}
+
+/// A gomon call, past or current (§4.2 of `docs/GOMON.md`).
+fn call_card(
+    post_id: &str,
+    card: &crate::gomon::CallCard,
+    actions: &MessageActions,
+) -> gtk::Widget {
+    let icon = gtk::Image::from_icon_name(if card.live {
+        "call-start-symbolic"
+    } else {
+        "call-stop-symbolic"
+    });
+    icon.add_css_class("call-card-icon");
+    if card.live {
+        icon.add_css_class("live");
+    }
+    icon.set_valign(gtk::Align::Center);
+
+    let text = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(2)
+        .hexpand(true)
+        .valign(gtk::Align::Center)
+        .build();
+    let line = |label: &str, classes: &[&str]| {
+        let label = gtk::Label::builder()
+            .label(label)
+            .xalign(0.0)
+            .wrap(true)
+            .build();
+        for class in classes {
+            label.add_css_class(class);
+        }
+        label
+    };
+    text.append(&line(
+        if card.live {
+            "Call in progress"
+        } else {
+            "Call ended"
+        },
+        &["heading"],
+    ));
+    if !card.participants.is_empty() {
+        text.append(&line(&card.participants.join(", "), &["caption"]));
+    }
+    if !card.missed.is_empty() {
+        text.append(&line(
+            &format!("Missed: {}", card.missed.join(", ")),
+            &["caption", "dim-label"],
+        ));
+    }
+
+    let row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .halign(gtk::Align::Start)
+        .build();
+    row.add_css_class("card");
+    row.add_css_class("call-card");
+    row.append(&icon);
+    row.append(&text);
+
+    if let Some(url) = card.recording_url.clone() {
+        let button = gtk::Button::builder()
+            .label("Recording")
+            .tooltip_text("Open the recording in a browser")
+            .valign(gtk::Align::Center)
+            .build();
+        button.add_css_class("flat");
+        button.connect_clicked(move |_| {
+            if let Err(e) = super::browser::open(&url) {
+                tracing::warn!("{e}");
+            }
+        });
+        row.append(&button);
+    }
+    if card.live {
+        let button = gtk::Button::builder()
+            .label("Join")
+            .valign(gtk::Align::Center)
+            .build();
+        button.add_css_class("suggested-action");
+        button.add_css_class("pill");
+        button.connect_clicked({
+            let actions = actions.clone();
+            let post_id = post_id.to_string();
+            move |_| (actions.post_action)(post_id.clone(), PostAction::JoinCall)
+        });
+        row.append(&button);
+    }
     row.upcast()
 }
 

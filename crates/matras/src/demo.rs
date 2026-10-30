@@ -362,6 +362,32 @@ fn dev_channel_feed() -> ChannelFeed {
     );
     posts.push(bot);
 
+    // gomon call cards: one over, with a ring nobody answered, and one still
+    // running.
+    let card = |id: &str, at: Millis, props: serde_json::Value| {
+        let mut card = post(id, "c-dev", "u-lena", "Звонок", at);
+        card.r#type = crate::gomon::CARD_POST_TYPE.into();
+        card.props = serde_json::from_value(props).unwrap_or_default();
+        card
+    };
+    posts.push(card(
+        "p-10",
+        BASE + 1_900_000,
+        serde_json::json!({
+            "call_id": "call_demo_1", "state": "ENDED",
+            "missed": "Sara Okafor:EXPIRED",
+            "recording_url": "https://example.invalid/recordings/rec_demo"
+        }),
+    ));
+    posts.push(card(
+        "p-11",
+        BASE + 2_000_000,
+        serde_json::json!({
+            "call_id": "call_demo_2", "state": "ACTIVE",
+            "participant_names": "Lena Petrova, Anton Palgunov"
+        }),
+    ));
+
     feed(posts)
 }
 

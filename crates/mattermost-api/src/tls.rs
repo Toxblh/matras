@@ -13,6 +13,10 @@
 
 use std::sync::Arc;
 
+/// Re-exported so a crate opening its own websocket gets the same TLS roots
+/// without repeating the per-platform feature split.
+pub use tokio_tungstenite;
+
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -64,7 +68,7 @@ pub(crate) fn android_rustls_config() -> rustls::ClientConfig {
 
 /// The connector for [`tokio_tungstenite::connect_async_tls_with_config`].
 /// `None` means the default — verify normally.
-pub(crate) fn ws_connector() -> Option<tokio_tungstenite::Connector> {
+pub fn ws_connector() -> Option<tokio_tungstenite::Connector> {
     if !insecure() {
         return None;
     }

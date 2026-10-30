@@ -76,7 +76,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             channel_id,
             ..Default::default()
         };
-        let session = CallSession::join(&client, ws, opts, &discovery).await?;
+        let session = std::sync::Arc::new(mattermost_calls::AnyCall::Calls(
+            CallSession::join(&client, ws, opts, &discovery).await?,
+        ));
         tracing::info!(
             session = %session.session_id(),
             call_id = %session.call_id(),

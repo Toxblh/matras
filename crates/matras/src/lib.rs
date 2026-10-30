@@ -16,6 +16,7 @@ mod background;
 mod cache;
 mod demo;
 mod emoji;
+mod gomon;
 mod markdown;
 mod resource_cache;
 mod runtime;

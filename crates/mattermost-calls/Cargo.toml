@@ -11,6 +11,7 @@ repository.workspace = true
 flate2 = "1.1.9"
 futures-util.workspace = true
 mattermost-api = { path = "../mattermost-api" }
+prost = "0.14"
 rmp-serde = "1.3.1"
 serde = { workspace = true, features = ["derive"] }
 serde_bytes = "0.11.19"
@@ -19,3 +20,6 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing.workspace = true
 webrtc = "0.17"
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

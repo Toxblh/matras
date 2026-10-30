@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use mattermost_api::models::*;
 use mattermost_api::{Client, WebSocket};
-use mattermost_calls::{CallSession, Discovery};
+use mattermost_calls::{AnyCall, Discovery};
 
 /// Posts for one channel.
 ///
@@ -151,6 +151,9 @@ pub struct AppState {
 
     /// Calls discovery, when the plugin is installed and reachable.
     pub calls: Option<Discovery>,
+    /// The server runs gomon, which then carries every call: a server with
+    /// both is one migrating to it.
+    pub gomon: bool,
     /// Channels with a call in progress, mapped to who is in it. User ids, in
     /// the order they joined — the sidebar draws the first few faces, and the
     /// length is the participant count.
@@ -210,7 +213,7 @@ pub struct AppState {
 
 /// A joined call and the audio devices serving it.
 pub struct ActiveCall {
-    pub session: Arc<CallSession>,
+    pub session: Arc<AnyCall>,
     pub channel_id: String,
     pub recording: bool,
     /// Media session id → user id. The media plane carries no user ids, so
@@ -266,6 +269,7 @@ impl AppState {
             thread_inbox: Vec::new(),
             mentions: Vec::new(),
             calls: None,
+            gomon: false,
             active_calls: HashMap::new(),
             call: None,
             drafts: HashMap::new(),

@@ -42,7 +42,7 @@ use gtk::glib;
 use mattermost_api::bootstrap::Bootstrap;
 use mattermost_api::models::*;
 use mattermost_api::ws::{Event, WebSocket, WsUpdate};
-use mattermost_calls::{CallSession, CallUpdate, JoinOptions};
+use mattermost_calls::{AnyCall, CallSession, CallUpdate, JoinOptions};
 
 use crate::audio::AudioIo;
 use crate::avatars::Avatars;
@@ -1252,6 +1252,36 @@ fn build_session_ui(
         });
         app.add_action(&action);
 
+        // The buttons on a gomon ring, keyed by invitation.
+        for (name, accept) in [("gomon-accept", true), ("gomon-decline", false)] {
+            let call_action =
+                gtk::gio::SimpleAction::new(name, Some(&String::static_variant_type()));
+            call_action.connect_activate({
+                let ui = ui.clone();
+                move |_, target| {
+                    let Some(invitation) = target.and_then(|t| t.get::<String>()) else {
+                        return;
+                    };
+                    ui.stop_ringing_gomon(&invitation);
+                    if accept {
+                        ui.window.set_visible(true);
+                        ui.window.present();
+                        ui.join_gomon(GomonEntry::Accept(invitation));
+                    } else {
+                        let client = ui.state.borrow().client.clone();
+                        runtime::spawn(
+                            async move {
+                                use mattermost_calls::gomon::api;
+                                api::answer(&client, &invitation, api::Answer::Decline).await
+                            },
+                            |_| {},
+                        );
+                    }
+                }
+            });
+            app.add_action(&call_action);
+        }
+
         // The buttons on an incoming-call notification.
         for (name, join) in [("join-call", true), ("dismiss-call", false)] {
             let call_action =
@@ -1651,8 +1681,9 @@ impl Ui {
         );
         // Keyed by channel, so a second call in the same DM replaces the first
         // rather than stacking two doorbells.
-        app.send_notification(Some(&format!("call-{channel_id}")), &notification);
-        self.state.borrow_mut().ringing.push(channel_id.to_string());
+        let id = format!("call-{channel_id}");
+        app.send_notification(Some(&id), &notification);
+        self.state.borrow_mut().ringing.push(id);
     }
 
     /// Takes every incoming-call notification back down.
@@ -1661,8 +1692,116 @@ impl Ui {
         let Some(app) = self.window.application() else {
             return;
         };
-        for channel_id in ringing {
-            app.withdraw_notification(&format!("call-{channel_id}"));
+        for id in ringing {
+            app.withdraw_notification(&id);
+        }
+    }
+
+    /// A gomon ring (§5 of `docs/GOMON.md`). The server gives up on a ring no
+    /// device has acknowledged within 10 s, so the ack goes out first.
+    fn ring_gomon(self: &Rc<Self>, invitation_id: &str, inviter: &str, dispatching: bool) {
+        let id = format!("call-gomon-{invitation_id}");
+        if self.state.borrow().ringing.contains(&id) {
+            return;
+        }
+        if dispatching {
+            let client = self.state.borrow().client.clone();
+            let invitation = invitation_id.to_string();
+            runtime::spawn(
+                async move {
+                    use mattermost_calls::gomon::api;
+                    api::answer(&client, &invitation, api::Answer::Ack).await
+                },
+                |result| {
+                    if let Err(e) = result {
+                        tracing::warn!(error = %e, "gomon: could not acknowledge the ring");
+                    }
+                },
+            );
+        }
+        let Some(app) = self.window.application() else {
+            return;
+        };
+        let who = if inviter.is_empty() {
+            "Someone"
+        } else {
+            inviter
+        };
+        let notification = gtk::gio::Notification::new(&format!("{who} is calling"));
+        notification.set_body(Some("Incoming call"));
+        notification.set_priority(gtk::gio::NotificationPriority::Urgent);
+        let target = invitation_id.to_variant();
+        notification.add_button_with_target_value("Accept", "app.gomon-accept", Some(&target));
+        notification.add_button_with_target_value("Decline", "app.gomon-decline", Some(&target));
+        app.send_notification(Some(&id), &notification);
+        self.state.borrow_mut().ringing.push(id);
+    }
+
+    /// The ring was answered elsewhere, declined, or ran out.
+    fn stop_ringing_gomon(&self, invitation_id: &str) {
+        let id = format!("call-gomon-{invitation_id}");
+        self.state.borrow_mut().ringing.retain(|r| *r != id);
+        if let Some(app) = self.window.application() {
+            app.withdraw_notification(&id);
+        }
+    }
+
+    fn apply_gomon_event(
+        self: &Rc<Self>,
+        kind: &str,
+        data: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        let field = |key: &str| data.get(key).and_then(|v| v.as_str()).unwrap_or_default();
+        match kind {
+            "incoming" => {
+                let state = field("state");
+                self.ring_gomon(
+                    field("invitation_id"),
+                    field("inviter_name"),
+                    state == "DISPATCHING",
+                );
+            }
+            "incoming_closed" => self.stop_ringing_gomon(field("invitation_id")),
+            // Somebody joined, left, started or ended a call in one of our
+            // channels. The event has a head count only; the faces come from
+            // asking for the channel's call.
+            "call_state" => {
+                let channel_id = field("channel_id").to_string();
+                if channel_id.is_empty() {
+                    return;
+                }
+                let client = self.state.borrow().client.clone();
+                let ui = self.clone();
+                runtime::spawn(
+                    async move {
+                        mattermost_calls::gomon::api::channel_call(&client, &channel_id)
+                            .await
+                            .map(|call| (channel_id, call))
+                    },
+                    move |result| {
+                        let Ok((channel_id, call)) = result else {
+                            return;
+                        };
+                        {
+                            let mut st = ui.state.borrow_mut();
+                            match call {
+                                Some(call) => {
+                                    let ids = mattermost_calls::gomon::api::split_ids(
+                                        &call.participant_ids,
+                                    );
+                                    st.active_calls.insert(channel_id, ids);
+                                }
+                                None => {
+                                    st.active_calls.remove(&channel_id);
+                                }
+                            }
+                        }
+                        ui.channels.refresh(&ui.state, &ui.avatars);
+                        ui.refresh_call_ui();
+                    },
+                );
+            }
+            _ => {}
         }
     }
 
@@ -4224,6 +4363,104 @@ impl Ui {
         );
     }
 
+    /// Joins the gomon call a card is about.
+    fn join_gomon_call(self: &Rc<Self>, post_id: String) {
+        let post = self.state.borrow().post(&post_id);
+        let Some((post, card)) =
+            post.and_then(|p| crate::gomon::CallCard::from_post(&p).map(|c| (p, c)))
+        else {
+            return;
+        };
+        let _ = post;
+        self.join_gomon(GomonEntry::Call(card.call_id));
+    }
+
+    /// Gets into a gomon call. Every way in ends with the plugin handing out a
+    /// one-time link, which the session redeems at once: it is good for two
+    /// minutes.
+    fn join_gomon(self: &Rc<Self>, entry: GomonEntry) {
+        let st = self.state.borrow();
+        if st.call.is_some() {
+            drop(st);
+            self.toast("Leave the current call first");
+            return;
+        }
+        let client = st.client.clone();
+        let setting = st.teammate_name_display().to_string();
+        // gomon knows people by display name only; every way the server might
+        // have spelt one leads back to the account.
+        let mut people = HashMap::new();
+        for user in st.users.values() {
+            let full = format!("{} {}", user.first_name, user.last_name);
+            let reversed = format!("{} {}", user.last_name, user.first_name);
+            for name in [
+                user.display_name(&setting),
+                full.trim().to_string(),
+                reversed.trim().to_string(),
+                user.nickname.clone(),
+                user.username.clone(),
+            ] {
+                if !name.is_empty() {
+                    people.entry(name).or_insert_with(|| user.id.clone());
+                }
+            }
+        }
+        let me = st.me.id.clone();
+        drop(st);
+
+        let ui = self.clone();
+        tracing::info!(?entry, "joining the gomon call");
+        runtime::spawn(
+            async move {
+                use mattermost_calls::gomon::{api, GomonJoin, GomonSession};
+                let (channel_id, join_url) = match entry {
+                    GomonEntry::Start(channel_id) => {
+                        let url = api::start(&client, &channel_id, false).await?.join_url;
+                        (channel_id, url)
+                    }
+                    GomonEntry::Call(call_id) => {
+                        (String::new(), api::join_url(&client, &call_id).await?)
+                    }
+                    GomonEntry::Accept(invitation) => {
+                        let answered =
+                            api::answer(&client, &invitation, api::Answer::Accept).await?;
+                        let url = answered.join_url.ok_or_else(|| {
+                            mattermost_calls::CallsError::Rejected(format!(
+                                "the call is {}",
+                                answered.state.to_lowercase()
+                            ))
+                        })?;
+                        (String::new(), url)
+                    }
+                };
+                let session = GomonSession::join(GomonJoin {
+                    channel_id,
+                    join_url,
+                    people,
+                    me,
+                })
+                .await?;
+                Ok::<_, mattermost_calls::CallsError>(Arc::new(AnyCall::Gomon(session)))
+            },
+            move |result| {
+                match result {
+                    Ok(session) => {
+                        // A ring or a card may be for a channel not on screen.
+                        let channel_id = session.channel_id().to_string();
+                        if !channel_id.is_empty() {
+                            ui.dispatch(Action::SelectChannel(channel_id));
+                        }
+                        ui.call_joined(session)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "could not join the gomon call");
+                        ui.toast_error("Could not join the call", &e)
+                    }
+                }
+            },
+        );
+    }
+
     /// Everything a message's own menu can ask for.
     fn post_action(self: &Rc<Self>, post_id: String, what: PostAction) {
         let (client, me, post) = {
@@ -4290,6 +4527,7 @@ impl Ui {
                     );
                 });
             }
+            PostAction::JoinCall => self.join_gomon_call(post_id),
             PostAction::History => {
                 let ui = self.clone();
                 runtime::spawn(
@@ -5315,8 +5553,8 @@ impl Ui {
 
     fn refresh_call_ui(&self) {
         let st = self.state.borrow();
-        let available = st.calls.is_some() && st.current_channel.is_some();
-        let reason = if st.calls.is_none() {
+        let available = (st.calls.is_some() || st.gomon) && st.current_channel.is_some();
+        let reason = if st.calls.is_none() && !st.gomon {
             Some("Calls are not enabled on this server")
         } else {
             None
@@ -6319,6 +6557,11 @@ impl Ui {
         let Some(channel_id) = st.current_channel.clone() else {
             return;
         };
+        if st.gomon {
+            drop(st);
+            self.join_gomon(GomonEntry::Start(channel_id));
+            return;
+        }
         let (Some(discovery), Some(ws)) = (st.calls.clone(), st.ws.clone()) else {
             drop(st);
             self.toast("Calls are not enabled on this server");
@@ -6335,7 +6578,9 @@ impl Ui {
                     channel_id,
                     ..Default::default()
                 };
-                CallSession::join(&client, ws, opts, &discovery).await
+                CallSession::join(&client, ws, opts, &discovery)
+                    .await
+                    .map(|s| Arc::new(AnyCall::Calls(s)))
             },
             move |result| match result {
                 Ok(session) => {
@@ -6351,7 +6596,7 @@ impl Ui {
     }
 
     /// Starts audio for a freshly joined call and subscribes to its updates.
-    fn call_joined(self: &Rc<Self>, session: Arc<CallSession>) {
+    fn call_joined(self: &Rc<Self>, session: Arc<AnyCall>) {
         // A late safety net if the up-front init at window map never ran:
         // ndk_context must be set before cpal touches it, and the mic must be
         // granted before the capture stream opens.
@@ -6875,6 +7120,10 @@ impl Ui {
             event: name, data, ..
         } = &event
         {
+            if let Some(kind) = name.strip_prefix("custom_ru.corp.comms_") {
+                self.apply_gomon_event(kind, data);
+                return;
+            }
             if let Some(kind) = name.strip_prefix(REACTION_NOTIFY_PREFIX) {
                 self.apply_reaction_notice(kind, data);
                 return;
@@ -7456,10 +7705,22 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                     .unwrap_or_default(),
                 None => Vec::new(),
             };
-            Ok::<_, mattermost_api::Error>((boot, calls, active))
+            let gomon = mattermost_calls::gomon::api::available(&client)
+                .await
+                .inspect_err(|e| tracing::warn!(error = %e, "gomon discovery failed"))
+                .unwrap_or(false);
+            let gomon_live = if gomon {
+                mattermost_calls::gomon::api::active(&client)
+                    .await
+                    .inspect_err(|e| tracing::warn!(error = %e, "gomon: active calls"))
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            Ok::<_, mattermost_api::Error>((boot, calls, active, gomon, gomon_live))
         },
         move |result| {
-            let (boot, calls, active) = match result {
+            let (boot, calls, active, gomon, gomon_live) = match result {
                 Ok(v) => v,
                 Err(e) => {
                     // A refused token is spent; anything else (server down,
@@ -7508,12 +7769,14 @@ fn bootstrap(ui: Rc<Ui>, on_auth_failure: Option<Box<dyn FnOnce()>>) {
                     .collect();
                 st.users_fetched_at = glib::real_time() / 1000;
                 st.calls = calls;
+                st.gomon = gomon;
                 st.active_calls = active
                     .into_iter()
                     .filter_map(|c| {
                         let call = c.call?;
                         Some((c.channel_id, participants(&call)))
                     })
+                    .chain(gomon_live)
                     .collect();
 
                 ws_url = st.client.websocket_url();
@@ -7751,6 +8014,17 @@ fn resync(ui: &Rc<Ui>) {
             }
         },
     );
+}
+
+/// The ways into a gomon call.
+#[derive(Debug)]
+enum GomonEntry {
+    /// The call button: start one here, or join the one already running.
+    Start(String),
+    /// A call card's Join, by call id.
+    Call(String),
+    /// Accepting a ring, by invitation id.
+    Accept(String),
 }
 
 /// `MATRAS_SCREENSHOT=out.png` renders the window to a file and exits.

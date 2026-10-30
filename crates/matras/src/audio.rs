@@ -19,9 +19,7 @@ use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, FromSample, Sample as _, SampleFormat, SizedSample, StreamConfig};
-use mattermost_calls::{
-    write_audio_sample, CallSession, Sample, TrackLocalStaticSample, TrackRemote,
-};
+use mattermost_calls::{write_audio_sample, AnyCall, Sample, TrackLocalStaticSample, TrackRemote};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::runtime;
@@ -65,7 +63,7 @@ pub struct AudioIo {
 
 impl AudioIo {
     /// Opens the default microphone and speakers and starts encoding.
-    pub fn start(session: Arc<CallSession>) -> Result<Self, String> {
+    pub fn start(session: Arc<AnyCall>) -> Result<Self, String> {
         let host = cpal::default_host();
         let mic = host
             .default_input_device()
@@ -345,7 +343,7 @@ fn build_output(
 /// Encodes captured audio into 20 ms Opus packets for as long as the channel
 /// stays open — which is until [`AudioIo`] is dropped.
 async fn encode_loop(
-    session: Arc<CallSession>,
+    session: Arc<AnyCall>,
     track: Arc<Mutex<Option<Arc<TrackLocalStaticSample>>>>,
     mut rx: UnboundedReceiver<Vec<f32>>,
 ) {
