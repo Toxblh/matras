@@ -87,6 +87,8 @@ const FILE_PREFIX: &str = "file:";
 /// Marks a cache key as a file's larger preview image, on the same cache but
 /// never colliding with its own thumbnail entry.
 const FILE_PREVIEW_PREFIX: &str = "preview:";
+/// Marks a cache key as a link preview's picture, keyed by its URL.
+const LINK_IMAGE_PREFIX: &str = "link-image:";
 /// Marks a cache key as a custom emoji, looked up by name rather than by id.
 const EMOJI_PREFIX: &str = "emoji:";
 /// Marks a cache key as a video's head bytes (see [`Avatars::video_head`]).
@@ -130,7 +132,9 @@ const MAX_DECODED: i32 = 1000;
 /// in. `Pixbuf` scales during decode, so the full-size image is never held.
 /// Faces and emoji are already small; only the file images are worth scaling.
 fn decode(id: &str, bytes: Vec<u8>) -> Result<gdk::Texture, glib::Error> {
-    let big = id.starts_with(FILE_PREVIEW_PREFIX) || id.starts_with(FILE_PREFIX);
+    let big = id.starts_with(FILE_PREVIEW_PREFIX)
+        || id.starts_with(FILE_PREFIX)
+        || id.starts_with(LINK_IMAGE_PREFIX);
     let data = glib::Bytes::from_owned(bytes);
     if !big {
         return gdk::Texture::from_bytes(&data);
@@ -197,6 +201,11 @@ impl Avatars {
     /// file id can never collide with a user id.
     pub fn file_thumbnail(&self, file_id: &str) -> Option<gdk::Texture> {
         self.cached(&format!("{FILE_PREFIX}{file_id}"))
+    }
+
+    /// The picture a link preview carries, through the server's image proxy.
+    pub fn link_image(&self, url: &str) -> Option<gdk::Texture> {
+        self.cached(&format!("{LINK_IMAGE_PREFIX}{url}"))
     }
 
     /// An attached image's larger preview (server-capped at 1920px wide),
@@ -388,6 +397,15 @@ impl Avatars {
                     .get_or_fetch(cache_key, ttl, || async move {
                         if let Some(file_id) = fetch_id.strip_prefix(FILE_PREFIX) {
                             return client.file_thumbnail_bytes(file_id).await;
+                        }
+                        if let Some(url) = fetch_id.strip_prefix(LINK_IMAGE_PREFIX) {
+                            // The server's proxy when it has one; it refuses
+                            // when it does not, and then the picture comes
+                            // from the site, as the web client loads it.
+                            return match client.proxied_image_bytes(url).await {
+                                Ok(bytes) => Ok(bytes),
+                                Err(_) => client.external_image_bytes(url).await,
+                            };
                         }
                         if let Some(file_id) = fetch_id.strip_prefix(FILE_PREVIEW_PREFIX) {
                             return client.file_preview_bytes(file_id).await;

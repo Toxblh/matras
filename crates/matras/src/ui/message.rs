@@ -961,7 +961,36 @@ fn call_card(
 }
 
 /// A link the server resolved into a title and a description.
-fn link_preview(embed: &mattermost_api::models::PostEmbed) -> Option<gtk::Widget> {
+/// A link card's picture: as wide as an image attachment at most, and never
+/// taller than a third of that, which is the shape sites design them in.
+fn link_image_size(width: i32, height: i32) -> (i32, i32) {
+    const MAX_WIDTH: i32 = 400;
+    if width <= 0 || height <= 0 {
+        return (MAX_WIDTH, MAX_WIDTH / 2);
+    }
+    let w = width.min(MAX_WIDTH);
+    let h = (w as i64 * height as i64 / width as i64) as i32;
+    (w, h.clamp(MAX_WIDTH / 4, MAX_WIDTH * 2 / 3))
+}
+
+/// The picture an Open Graph preview names, if it names one.
+pub(super) fn link_image_url(embed: &mattermost_api::models::PostEmbed) -> Option<String> {
+    let image = embed.data.as_ref()?.get("images")?.get(0)?;
+    let pick = |key: &str| {
+        image
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|u| !u.is_empty())
+    };
+    pick("secure_url")
+        .or_else(|| pick("url"))
+        .map(str::to_owned)
+}
+
+fn link_preview(
+    embed: &mattermost_api::models::PostEmbed,
+    avatars: &Avatars,
+) -> Option<gtk::Widget> {
     let data = embed.data.as_ref()?;
     let read = |key: &str| {
         data.get(key)
@@ -991,6 +1020,40 @@ fn link_preview(embed: &mattermost_api::models::PostEmbed) -> Option<gtk::Widget
         .spacing(2)
         .build();
     card.add_css_class("permalink-card");
+
+    // The site's own picture for the page, above its title, as every client
+    // draws a link card. Sized from what the server measured, so the card
+    // does not jump when the picture lands.
+    if let Some(url) = link_image_url(embed) {
+        let image = data.get("images").and_then(|i| i.get(0));
+        let dim = |key: &str| {
+            image
+                .and_then(|i| i.get(key))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32
+        };
+        let (width, height) = link_image_size(dim("width"), dim("height"));
+        let picture = gtk::Picture::builder()
+            .content_fit(gtk::ContentFit::Cover)
+            .height_request(height)
+            .build();
+        picture.add_css_class("link-image");
+        match avatars.link_image(&url) {
+            Some(texture) => picture.set_paintable(Some(&texture)),
+            None => {
+                picture.set_paintable(Some(&gtk::gdk::Paintable::new_empty(width, height)));
+                picture.add_css_class("loading");
+            }
+        }
+        card.append(
+            &adw::Clamp::builder()
+                .maximum_size(width)
+                .tightening_threshold(width)
+                .halign(gtk::Align::Start)
+                .child(&picture)
+                .build(),
+        );
+    }
     card.append(&heading);
 
     let description = read("description");
@@ -1054,7 +1117,7 @@ fn permalink_preview(
     actions: &MessageActions,
 ) -> Option<gtk::Widget> {
     if embed.r#type == "opengraph" || embed.r#type == "link" {
-        return link_preview(embed);
+        return link_preview(embed, avatars);
     }
     if embed.r#type != "permalink" {
         return None;

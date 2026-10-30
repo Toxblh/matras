@@ -55,7 +55,19 @@ pub fn parse_with(message: &str, known: &dyn Fn(&str) -> Option<String>) -> Vec<
         text.clear();
     };
 
+    let mut in_link = false;
+    // Consecutive text, gathered: the parser splits a run at every `_` or
+    // `*` that might have opened emphasis, which cut a URL in two.
+    let mut prose = String::new();
     for event in Parser::new_ext(message, options) {
+        if let (Event::Text(t), None, false) = (&event, code.as_ref(), in_link) {
+            prose.push_str(t);
+            continue;
+        }
+        if !prose.is_empty() {
+            text.push_str(&inline(&prose, known));
+            prose.clear();
+        }
         match event {
             Event::Start(Tag::CodeBlock(kind)) => {
                 flush(&mut text, &mut blocks);
@@ -75,7 +87,9 @@ pub fn parse_with(message: &str, known: &dyn Fn(&str) -> Option<String>) -> Vec<
             }
             Event::Text(t) => match code.as_mut() {
                 Some((_, body)) => body.push_str(&t),
-                None => text.push_str(&inline(&t, known)),
+                // Inside [text](url) the text is already a link, and a link
+                // cannot hold another; prose outside one is gathered above.
+                None => text.push_str(&inline_plain(&t, known)),
             },
             // Inline code is a span, not a block: it belongs in the sentence.
             Event::Code(t) => {
@@ -90,10 +104,14 @@ pub fn parse_with(message: &str, known: &dyn Fn(&str) -> Option<String>) -> Vec<
             Event::Start(Tag::Strikethrough) => text.push_str("<s>"),
             Event::End(TagEnd::Strikethrough) => text.push_str("</s>"),
             Event::Start(Tag::Link { dest_url, .. }) => {
+                in_link = true;
                 // Pango's own link markup, so the label handles activation.
                 text.push_str(&format!("<a href=\"{}\">", escape(&dest_url)));
             }
-            Event::End(TagEnd::Link) => text.push_str("</a>"),
+            Event::End(TagEnd::Link) => {
+                in_link = false;
+                text.push_str("</a>");
+            }
             Event::Start(Tag::Heading { .. }) => text.push_str("<b><big>"),
             Event::End(TagEnd::Heading(_)) => {
                 text.push_str("</big></b>\n");
@@ -153,6 +171,7 @@ pub fn parse_with(message: &str, known: &dyn Fn(&str) -> Option<String>) -> Vec<
             _ => {}
         }
     }
+    text.push_str(&inline(&prose, known));
     flush(&mut text, &mut blocks);
     blocks
 }
@@ -162,7 +181,60 @@ pub fn parse_with(message: &str, known: &dyn Fn(&str) -> Option<String>) -> Vec<
 ///
 /// Done after escaping, because both replacements *emit* markup and would
 /// otherwise be escaped along with everything else.
+/// A bare `https://…` in prose is a link, as every Mattermost client shows
+/// it; CommonMark only links one written as `<https://…>`.
 fn inline(text: &str, known: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = find_url(rest) {
+        out.push_str(&inline_plain(&rest[..start], known));
+        let url = url_at(&rest[start..]);
+        out.push_str(&format!("<a href=\"{0}\">{0}</a>", escape(url)));
+        rest = &rest[start + url.len()..];
+    }
+    out.push_str(&inline_plain(rest, known));
+    out
+}
+
+/// Where the next `http://` or `https://` starts, at the start of a word.
+fn find_url(text: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(at) = text[from..].find("http").map(|i| i + from) {
+        let starts_word = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let tail = &text[at..];
+        if starts_word && (tail.starts_with("https://") || tail.starts_with("http://")) {
+            return Some(at);
+        }
+        from = at + 4;
+    }
+    None
+}
+
+/// The URL at the start of `text`: up to whitespace, less the punctuation a
+/// sentence puts after a link. A closing bracket stays when the URL opened
+/// one, as Wikipedia's do.
+fn url_at(text: &str) -> &str {
+    let end = text
+        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"'))
+        .unwrap_or(text.len());
+    let mut url = &text[..end];
+    loop {
+        let trimmed = url.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'']);
+        let trimmed = match trimmed.strip_suffix(')') {
+            Some(inner) if inner.matches('(').count() < inner.matches(')').count() + 1 => inner,
+            _ => trimmed,
+        };
+        if trimmed.len() == url.len() {
+            return url;
+        }
+        url = trimmed;
+    }
+}
+
+fn inline_plain(text: &str, known: &dyn Fn(&str) -> Option<String>) -> String {
     let escaped = escape(text);
     let mut out = String::with_capacity(escaped.len());
     let mut rest = escaped.as_str();
@@ -264,6 +336,25 @@ mod tests {
             [Block::Text(t)] => t.clone(),
             other => panic!("expected one text block, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn bare_urls_become_links() {
+        assert_eq!(
+            text_of("see https://altlinux.space/a/b?x=1&y=2."),
+            "see <a href=\"https://altlinux.space/a/b?x=1&amp;y=2\">https://altlinux.space/a/b?x=1&amp;y=2</a>."
+        );
+        // Brackets: kept when the URL has its own, dropped when they wrap it.
+        assert_eq!(
+            text_of("(https://en.wikipedia.org/wiki/Rust_(language))"),
+            "(<a href=\"https://en.wikipedia.org/wiki/Rust_(language)\">https://en.wikipedia.org/wiki/Rust_(language)</a>)"
+        );
+        // Not inside a word, and not twice inside a written link.
+        assert_eq!(text_of("xhttps://a.b"), "xhttps://a.b");
+        assert_eq!(
+            text_of("[docs](https://example.com)"),
+            "<a href=\"https://example.com\">docs</a>"
+        );
     }
 
     #[test]

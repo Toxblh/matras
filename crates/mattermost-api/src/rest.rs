@@ -1609,6 +1609,31 @@ impl Client {
         Ok(resp.bytes().await?.to_vec())
     }
 
+    /// `GET /api/v4/image?url=` — a picture from another site, by way of the
+    /// server: its image proxy when one is set up, otherwise a redirect to the
+    /// picture itself. The way the web client loads a link preview's image,
+    /// and the session header is not carried across to the other site.
+    pub async fn proxied_image_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let encoded: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+        let resp = self
+            .send(self.request(Method::GET, &self.api(&format!("/image?url={encoded}"))))
+            .await?;
+        Ok(resp.bytes().await?.to_vec())
+    }
+
+    /// A picture straight from another site, for a server with no image proxy
+    /// (`HasImageProxy` false), where the web client does the same. Sent bare:
+    /// no session token and no connection id, since neither is that site's
+    /// business. Only http(s).
+    pub async fn external_image_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let parsed = url::Url::parse(url)?;
+        if !matches!(parsed.scheme(), "https" | "http") {
+            return Err(Error::Url(url::ParseError::RelativeUrlWithoutBase));
+        }
+        let resp = self.send(self.http.request(Method::GET, parsed)).await?;
+        Ok(resp.bytes().await?.to_vec())
+    }
+
     /// `GET /api/v4/groups` — the groups that can be @-mentioned.
     ///
     /// Licensed servers only: Team Edition answers 501, which is the same as

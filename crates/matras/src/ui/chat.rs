@@ -170,6 +170,12 @@ impl FeedItem {
                 return post.file_ids.iter().any(|id| id == file_id)
                     || post.files().iter().any(|file| file.id == file_id);
             }
+            if let Some(url) = key.strip_prefix("link-image:") {
+                return post
+                    .embeds()
+                    .iter()
+                    .any(|embed| super::message::link_image_url(embed).as_deref() == Some(url));
+            }
             if let Some(name) = key.strip_prefix("emoji:") {
                 return post.message.contains(&format!(":{name}:"));
             }

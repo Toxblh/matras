@@ -194,6 +194,15 @@ link:visited {
   margin-top: 4px;
 }
 
+/* A link card's picture, rounded like the card it sits in. */
+.link-image {
+  border-radius: 8px;
+  margin-bottom: 4px;
+}
+.link-image.loading {
+  background-color: alpha(currentColor, 0.06);
+}
+
 /* An attached picture still loading: its own size, faintly filled. */
 .attachment-image.loading {
   background-color: alpha(currentColor, 0.06);
