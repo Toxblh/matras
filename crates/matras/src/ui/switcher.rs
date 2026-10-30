@@ -22,11 +22,32 @@ pub enum Target {
     User(String),
 }
 
+/// What a row leads with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Icon {
+    Symbolic(String),
+    /// A character in place of an icon: the `#` the sidebar draws.
+    Glyph(String),
+    /// A person's face: user id and the name for the initials.
+    Person(String, String),
+}
+
+/// One result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Item {
+    pub target: Target,
+    pub title: String,
+    pub subtitle: String,
+    pub icon: Icon,
+}
+
 /// The window outlives this call; the handle is how results get in.
 pub struct Switcher {
+    search: gtk::SearchEntry,
     list: gtk::ListBox,
     /// One per row, in row order — a row's index is its target's index.
     targets: Rc<RefCell<Vec<Target>>>,
+    avatars: crate::avatars::Avatars,
 }
 
 impl Switcher {
@@ -34,6 +55,7 @@ impl Switcher {
     /// `on_pick` fires with the chosen target and the window closes itself.
     pub fn present(
         parent: &impl IsA<gtk::Widget>,
+        avatars: &crate::avatars::Avatars,
         on_search: impl Fn(String) + 'static,
         on_pick: impl Fn(Target) + 'static,
     ) -> Self {
@@ -128,34 +150,79 @@ impl Switcher {
 
         window.present(Some(parent));
         search.grab_focus();
-        // Ask once on open: the recent conversations are worth showing before
-        // anyone types, and an empty window looks broken.
-        on_search(String::new());
-
-        Switcher { list, targets }
+        Switcher {
+            search,
+            list,
+            targets,
+            avatars: avatars.clone(),
+        }
     }
 
-    /// Results: (target, primary label, secondary label, icon name).
-    pub fn set_results(&self, items: Vec<(Target, String, String, String)>) {
+    /// Asks for results for whatever is in the entry. The caller does this
+    /// once it holds the handle, so the first answer has somewhere to go: the
+    /// recent conversations are worth showing before anyone types, and a
+    /// spinner that waits for a keystroke looks broken.
+    pub fn search(&self) {
+        self.search.emit_by_name::<()>("search-changed", &[]);
+    }
+
+    /// Types `term` into the entry, as a person would.
+    pub fn set_text(&self, term: &str) {
+        self.search.set_text(term);
+    }
+
+    /// Replaces the results. The selection stays on the same target when it
+    /// is still there — people arrive a moment after the channels, and the
+    /// row someone had arrowed to must not jump back to the top under them.
+    pub fn set_results(&self, items: Vec<Item>) {
+        let selected = self
+            .list
+            .selected_row()
+            .and_then(|row| self.targets.borrow().get(row.index() as usize).cloned());
         super::dialogs::reset_list(&self.list, "system-search-symbolic", "No Matches");
         let mut targets = self.targets.borrow_mut();
         targets.clear();
-        for (target, primary, secondary, icon) in items {
+        for item in items {
             // AdwActionRow reads both as Pango markup, and channel and user
             // names are free text — one ampersand would otherwise blank the row.
             let row = adw::ActionRow::builder()
-                .title(glib::markup_escape_text(&primary))
-                .subtitle(glib::markup_escape_text(&secondary))
+                .title(glib::markup_escape_text(&item.title))
+                .subtitle(glib::markup_escape_text(&item.subtitle))
                 .build();
-            row.add_prefix(&gtk::Image::from_icon_name(&icon));
+            let prefix: gtk::Widget = match &item.icon {
+                Icon::Symbolic(name) => {
+                    let image = gtk::Image::from_icon_name(name);
+                    image.set_pixel_size(16);
+                    // As wide as an avatar, so every title starts in one column.
+                    image.set_width_request(32);
+                    image.upcast()
+                }
+                Icon::Glyph(text) => {
+                    let label = gtk::Label::new(Some(text));
+                    label.add_css_class("title-4");
+                    label.add_css_class("dim-label");
+                    label.set_width_request(32);
+                    label.upcast()
+                }
+                Icon::Person(user_id, name) => {
+                    let avatar = adw::Avatar::new(32, Some(name), true);
+                    self.avatars.apply(&avatar, user_id, name);
+                    avatar.upcast()
+                }
+            };
+            row.add_prefix(&prefix);
             self.list.append(&row);
-            targets.push(target);
+            targets.push(item.target);
         }
+        let keep = selected
+            .and_then(|target| targets.iter().position(|t| *t == target))
+            .unwrap_or(0);
         drop(targets);
 
         // Something is always selected, so Enter answers with the best match
         // straight after typing, without a press spent picking a start.
-        self.list.select_row(self.list.row_at_index(0).as_ref());
+        self.list
+            .select_row(self.list.row_at_index(keep as i32).as_ref());
     }
 }
 

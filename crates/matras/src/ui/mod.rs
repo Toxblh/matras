@@ -192,6 +192,47 @@ mod inbox_navigation_tests {
 }
 
 #[cfg(test)]
+mod switch_tests {
+    use super::{switch_items, switcher::Target};
+
+    fn targets(term: &str) -> Vec<Target> {
+        let state = crate::demo::state();
+        let st = state.borrow();
+        switch_items(&st, term)
+            .into_iter()
+            .map(|i| i.target)
+            .collect()
+    }
+
+    #[test]
+    fn a_person_with_a_conversation_is_that_conversation() {
+        // Lena has a DM: one row for her, and it opens the DM.
+        let found = targets("lena");
+        assert_eq!(found.first(), Some(&Target::Channel("c-dm-lena".into())));
+        assert!(!found.contains(&Target::User("u-lena".into())));
+    }
+
+    #[test]
+    fn a_person_without_one_is_offered_by_surname_too() {
+        assert_eq!(targets("oka").first(), Some(&Target::User("u-sara".into())));
+    }
+
+    #[test]
+    fn a_word_start_beats_a_match_inside_a_word() {
+        // "dev" starts "Development"; nothing else starts a word with it.
+        assert_eq!(
+            targets("dev").first(),
+            Some(&Target::Channel("c-dev".into()))
+        );
+    }
+
+    #[test]
+    fn nothing_typed_offers_no_strangers() {
+        assert!(targets("").iter().all(|t| matches!(t, Target::Channel(_))));
+    }
+}
+
+#[cfg(test)]
 mod mention_tests {
     use super::{local_mentions, mentioned_names, COMPLETIONS};
     use mattermost_api::models::User;
@@ -308,6 +349,113 @@ fn channel_icon_name(channel: &Channel) -> String {
         _ => "system-users-symbolic",
     }
     .to_string()
+}
+
+/// What the quick switcher offers for `term`: channels and conversations,
+/// then people there is no conversation with yet.
+///
+/// Nothing typed lists the latest conversations, which is where one is most
+/// likely going. Typed, a name that starts with the term beats one that only
+/// contains it, and recency breaks the tie.
+fn switch_items(st: &AppState, term: &str) -> Vec<switcher::Item> {
+    let term = term.trim().to_lowercase();
+    let display = st.teammate_name_display().to_string();
+    // 0 for a match at the start of any word, 1 inside one, None for none.
+    let rank = |names: &[&str]| -> Option<u8> {
+        if term.is_empty() {
+            return Some(0);
+        }
+        names
+            .iter()
+            .filter_map(|name| {
+                let name = name.to_lowercase();
+                if name.starts_with(&term)
+                    || name
+                        .split(|c: char| !c.is_alphanumeric())
+                        .any(|word| word.starts_with(&term))
+                {
+                    Some(0)
+                } else {
+                    name.contains(&term).then_some(1)
+                }
+            })
+            .min()
+    };
+
+    let mut talked_to = std::collections::HashSet::new();
+    let mut ranked: Vec<(u8, i64, switcher::Item)> = Vec::new();
+    for channel in st.channels.values().filter(|c| c.delete_at == 0) {
+        let title = st.channel_title(channel);
+        let partner = channel
+            .dm_teammate_id(&st.me.id)
+            .and_then(|id| st.users.get(id));
+        let username = partner.map(|u| u.username.as_str()).unwrap_or_default();
+        let Some(r) = rank(&[&title, username, &channel.name]) else {
+            continue;
+        };
+        let (icon, subtitle) = match partner {
+            Some(user) => {
+                talked_to.insert(user.id.clone());
+                (
+                    switcher::Icon::Person(user.id.clone(), title.clone()),
+                    format!("@{}", user.username),
+                )
+            }
+            None => (
+                match channel.r#type {
+                    ChannelType::Open => switcher::Icon::Glyph("#".into()),
+                    _ => switcher::Icon::Symbolic(channel_icon_name(channel)),
+                },
+                match channel.r#type {
+                    ChannelType::Open => "Channel".to_string(),
+                    ChannelType::Private => "Private channel".to_string(),
+                    _ => "Group message".to_string(),
+                },
+            ),
+        };
+        ranked.push((
+            r,
+            channel.last_post_at,
+            switcher::Item {
+                target: switcher::Target::Channel(channel.id.clone()),
+                title,
+                subtitle,
+                icon,
+            },
+        ));
+    }
+    if !term.is_empty() {
+        for user in st.users.values() {
+            if user.id == st.me.id || user.delete_at != 0 || talked_to.contains(&user.id) {
+                continue;
+            }
+            let name = user.display_name(&display);
+            let full = format!("{} {}", user.first_name, user.last_name);
+            let Some(r) = rank(&[&name, &user.username, &full, &user.nickname]) else {
+                continue;
+            };
+            ranked.push((
+                r,
+                0,
+                switcher::Item {
+                    target: switcher::Target::User(user.id.clone()),
+                    icon: switcher::Icon::Person(user.id.clone(), name.clone()),
+                    title: name,
+                    subtitle: format!("@{}", user.username),
+                },
+            ));
+        }
+    }
+    ranked.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(b.1.cmp(&a.1))
+            .then(a.2.title.cmp(&b.2.title))
+    });
+    ranked
+        .into_iter()
+        .take(QUICK_SWITCH_ROWS)
+        .map(|(_, _, item)| item)
+        .collect()
 }
 
 /// A server URL with the scheme stripped, which is how people say it.
@@ -718,6 +866,12 @@ pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
         let initial = ui.state.borrow().current_channel.clone();
         if let Some(id) = initial {
             ui.dispatch(Action::SelectChannel(id));
+        }
+    }
+    if let Some(term) = std::env::var_os("MATRAS_DEMO_QUICK_SWITCH") {
+        let switcher = ui.quick_switch();
+        if !term.is_empty() {
+            switcher.set_text(&term.to_string_lossy());
         }
     }
     if std::env::var_os("MATRAS_DEMO_DIALOG").is_some() {
@@ -2269,7 +2423,9 @@ impl Ui {
             MenuAction::BrowseChannels => self.browse_channels(),
             MenuAction::Preferences => self.preferences(),
             MenuAction::EditProfile => self.edit_profile(),
-            MenuAction::QuickSwitch => self.quick_switch(),
+            MenuAction::QuickSwitch => {
+                self.quick_switch();
+            }
             MenuAction::SignOut => self.sign_out(),
             MenuAction::ScheduledPosts => self.scheduled_posts(),
             MenuAction::ChannelMembers => self.channel_members(),
@@ -3373,29 +3529,12 @@ impl Ui {
         let search_holder = holder.clone();
         let opened = Rc::new(switcher::Switcher::present(
             &self.window,
+            &self.avatars,
             move |term| {
-                let lowered = term.to_lowercase();
-                let st = search_ui.state.borrow();
-                let mut rows: Vec<(switcher::Target, String, String, String)> = st
-                    .channels
-                    .values()
-                    .filter(|c| c.delete_at == 0)
-                    .filter_map(|channel| {
-                        let title = st.channel_title(channel);
-                        (lowered.is_empty() || title.to_lowercase().contains(&lowered)).then(|| {
-                            (
-                                switcher::Target::Channel(channel.id.clone()),
-                                title,
-                                String::new(),
-                                channel_icon_name(channel),
-                            )
-                        })
-                    })
-                    .collect();
-                rows.sort_by_key(|row| row.1.to_lowercase());
-                rows.truncate(QUICK_SWITCH_ROWS);
+                let mut items = switch_items(&search_ui.state.borrow(), &term);
+                items.retain(|i| matches!(i.target, switcher::Target::Channel(_)));
                 if let Some(switcher) = search_holder.borrow().as_ref() {
-                    switcher.set_results(rows);
+                    switcher.set_results(items);
                 }
             },
             move |target| {
@@ -3404,78 +3543,67 @@ impl Ui {
                 }
             },
         ));
-        *holder.borrow_mut() = Some(opened);
+        *holder.borrow_mut() = Some(opened.clone());
+        opened.search();
     }
 
     /// Ctrl+K: jump to a channel or a person by typing a few letters.
     ///
-    /// Channels are matched locally against the sidebar — instant, and the
-    /// list is small. People have to be searched for, because the client only
-    /// knows the ones it has seen.
-    fn quick_switch(self: &Rc<Self>) {
+    /// Everything the client already holds answers at once; the server is
+    /// asked for the people it has not seen, and its answer is merged in only
+    /// if it is still for what is in the entry — answers to earlier keystrokes
+    /// arrive out of order and would otherwise replace the right list.
+    fn quick_switch(self: &Rc<Self>) -> Rc<switcher::Switcher> {
         let holder: Rc<RefCell<Option<Rc<switcher::Switcher>>>> = Rc::new(RefCell::new(None));
         let search_ui = self.clone();
         let pick_ui = self.clone();
         let search_holder = holder.clone();
+        let latest: Rc<RefCell<String>> = Rc::default();
 
         let opened = Rc::new(switcher::Switcher::present(
             &self.window,
+            &self.avatars,
             move |term| {
-                let lowered = term.to_lowercase();
-                let (client, team_id, mut rows) = {
+                *latest.borrow_mut() = term.clone();
+                let (client, team_id, items) = {
                     let st = search_ui.state.borrow();
-                    let mut rows: Vec<(switcher::Target, String, String, String)> =
-                        st.channels
-                            .values()
-                            .filter(|c| c.delete_at == 0)
-                            .filter_map(|channel| {
-                                let title = st.channel_title(channel);
-                                (lowered.is_empty() || title.to_lowercase().contains(&lowered))
-                                    .then(|| {
-                                        (
-                                            switcher::Target::Channel(channel.id.clone()),
-                                            title,
-                                            String::new(),
-                                            channel_icon_name(channel),
-                                        )
-                                    })
-                            })
-                            .collect();
-                    rows.sort_by_key(|row| row.1.to_lowercase());
-                    rows.truncate(QUICK_SWITCH_ROWS);
                     (
                         st.client.clone(),
                         st.current_team.clone().unwrap_or_default(),
-                        rows,
+                        switch_items(&st, &term),
                     )
                 };
-
                 if let Some(switcher) = search_holder.borrow().as_ref() {
-                    switcher.set_results(rows.clone());
+                    switcher.set_results(items);
                 }
-                if lowered.is_empty() {
+                if term.is_empty() {
                     return;
                 }
 
-                // People arrive after the channels rather than instead of
-                // them: the local answer should never wait on the network.
                 let holder = search_holder.clone();
-                let state = search_ui.state.clone();
+                let ui = search_ui.clone();
+                let latest = latest.clone();
                 runtime::spawn(
-                    async move { client.search_users(&term, &team_id, "", "").await },
+                    {
+                        let term = term.clone();
+                        async move { client.search_users(&term, &team_id, "", "").await }
+                    },
                     move |result| {
+                        if *latest.borrow() != term {
+                            return;
+                        }
                         let Ok(users) = result else { return };
-                        let display = state.borrow().teammate_name_display().to_string();
-                        rows.extend(users.into_iter().take(QUICK_SWITCH_ROWS).map(|user| {
-                            (
-                                switcher::Target::User(user.id.clone()),
-                                user.display_name(&display),
-                                format!("@{}", user.username),
-                                "avatar-default-symbolic".to_string(),
-                            )
-                        }));
+                        let items = {
+                            let mut st = ui.state.borrow_mut();
+                            // Known from now on, so the next keystroke finds
+                            // them locally and the row has a face to draw.
+                            for user in users {
+                                st.users.entry(user.id.clone()).or_insert(user);
+                            }
+                            switch_items(&st, &term)
+                        };
                         if let Some(switcher) = holder.borrow().as_ref() {
-                            switcher.set_results(rows.clone());
+                            switcher.set_results(items);
                         }
                     },
                 );
@@ -3485,7 +3613,9 @@ impl Ui {
                 switcher::Target::User(id) => pick_ui.dispatch(Action::OpenDirectMessage(id)),
             },
         ));
-        *holder.borrow_mut() = Some(opened);
+        *holder.borrow_mut() = Some(opened.clone());
+        opened.search();
+        opened
     }
 
     /// Your own name, nickname, position and picture.
