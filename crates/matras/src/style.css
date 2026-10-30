@@ -275,11 +275,42 @@ link:visited {
   background: none;
 }
 
-/* A video with no still yet: a blank tile with the play button in it, so a
-   clip reads as something to watch rather than as a line of text. */
+/* A video in the conversation: one rounded frame holding the still, a
+   large play button and the length in the corner, as messengers draw it. */
+.video-frame {
+  border-radius: 12px;
+  margin-top: 4px;
+  background-color: black;
+}
+
+/* No still yet: a dark tile, so it reads as a clip and not as a hole. */
 .video-tile {
-  border-radius: 8px;
-  background-color: alpha(currentColor, 0.10);
+  background-image: linear-gradient(135deg, #2e3440, #1c1f26);
+}
+
+.video-play {
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 999px;
+  color: white;
+  background-color: alpha(black, 0.55);
+  -gtk-icon-size: 24px;
+  transition: background-color 150ms ease-out, transform 150ms ease-out;
+}
+
+.video-frame:hover .video-play {
+  background-color: alpha(black, 0.75);
+  transform: scale(1.06);
+}
+
+.video-badge {
+  margin: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: white;
+  background-color: alpha(black, 0.55);
+  font-size: 0.8em;
+  font-weight: 600;
 }
 
 /* A file waiting to go out with the next message. */

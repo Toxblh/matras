@@ -27,6 +27,8 @@ struct Inner {
     /// The head of a video file — not a decoded image, so it sits beside
     /// `textures` rather than in it. See [`Avatars::video_head`].
     heads: HashMap<String, Rc<Vec<u8>>>,
+    /// How long each clip with a kept still runs, in microseconds.
+    durations: HashMap<String, i64>,
     /// In flight, so redrawing a hundred messages does not start a hundred
     /// downloads of the same face.
     pending: HashSet<String>,
@@ -100,6 +102,9 @@ const POSTER_PREFIX: &str = "poster:";
 /// cheaply from what did come back, and the caller gives up rather than
 /// asking for more.
 const VIDEO_HEAD_BYTES: u64 = 1_500_000;
+/// The most fetched from the end of an MP4 for its index. A phone clip's is
+/// tens of kilobytes; an hour of video runs to a few megabytes.
+const VIDEO_TAIL_BYTES: u64 = 8_000_000;
 
 /// How much decoded picture to hold, in bytes. Counting entries was the wrong
 /// unit by two orders of magnitude: an avatar is a few kilobytes and a posted
@@ -221,11 +226,24 @@ impl Avatars {
             .cloned()
     }
 
+    /// How long a clip with a kept still runs, in microseconds; 0 if unknown.
+    pub fn poster_duration(&self, file_id: &str) -> i64 {
+        self.inner
+            .borrow()
+            .durations
+            .get(file_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Keeps a still that was just taken, so the next redraw of that row
     /// draws a picture instead of starting a decoder over again.
-    pub fn remember_poster(&self, file_id: &str, texture: gdk::Texture) {
+    pub fn remember_poster(&self, file_id: &str, texture: gdk::Texture, duration: i64) {
         let key = format!("{POSTER_PREFIX}{file_id}");
         let mut inner = self.inner.borrow_mut();
+        if duration > 0 {
+            inner.durations.insert(file_id.to_string(), duration);
+        }
         inner.held += texture_bytes(&texture);
         inner.order.push(key.clone());
         if let Some(old) = inner.textures.insert(key, texture) {
@@ -248,6 +266,20 @@ impl Avatars {
         let mut inner = self.inner.borrow_mut();
         inner.heads.remove(&key);
         inner.failed.insert(key);
+    }
+
+    /// [`video_head`](Avatars::video_head), taken out of the cache: a head is
+    /// read once, into the file a still is made from, and one left behind
+    /// took a slot that another clip's head was then evicted from — which
+    /// asked again, landed, rebuilt its row and evicted the next, round and
+    /// round.
+    pub fn take_video_head(&self, file_id: &str) -> Option<Rc<Vec<u8>>> {
+        let head = self.video_head(file_id)?;
+        self.inner
+            .borrow_mut()
+            .heads
+            .remove(&format!("{VIDEO_HEAD_PREFIX}{file_id}"));
+        Some(head)
     }
 
     pub fn video_head(&self, file_id: &str) -> Option<Rc<Vec<u8>>> {
@@ -345,7 +377,13 @@ impl Avatars {
                     // File ids identify immutable uploads.
                     std::time::Duration::from_secs(30 * 24 * 60 * 60)
                 };
-                let cache_key = fetch_id.clone();
+                // Heads cached before the tail of an MP4 was fetched too are
+                // the ones that never made a still; a new key leaves them.
+                let cache_key = if fetch_id.starts_with(VIDEO_HEAD_PREFIX) {
+                    format!("{fetch_id}#tail")
+                } else {
+                    fetch_id.clone()
+                };
                 resources
                     .get_or_fetch(cache_key, ttl, || async move {
                         if let Some(file_id) = fetch_id.strip_prefix(FILE_PREFIX) {
@@ -355,7 +393,21 @@ impl Avatars {
                             return client.file_preview_bytes(file_id).await;
                         }
                         if let Some(file_id) = fetch_id.strip_prefix(VIDEO_HEAD_PREFIX) {
-                            return client.download_file_range(file_id, VIDEO_HEAD_BYTES).await;
+                            let head = client
+                                .download_file_range(file_id, VIDEO_HEAD_BYTES)
+                                .await?;
+                            // An MP4 with its index at the end: fetch the end
+                            // too, as a browser would. Failing that, the head
+                            // alone still says "no still" correctly.
+                            if let Some(offset) = crate::ui::media::mp4_tail_offset(&head) {
+                                if let Ok(tail) = client
+                                    .download_file_range_from(file_id, offset, VIDEO_TAIL_BYTES)
+                                    .await
+                                {
+                                    return Ok(crate::ui::media::sparse_head(&head, offset, &tail));
+                                }
+                            }
+                            return Ok(head);
                         }
                         if let Some(name) = fetch_id.strip_prefix(EMOJI_PREFIX) {
                             let emoji = client.emoji_by_name(name).await?;

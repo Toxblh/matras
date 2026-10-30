@@ -35,10 +35,20 @@ pub struct Frame {
 }
 
 #[cfg(feature = "video")]
-pub use pipe::{pick_screen, VideoSender};
+pub use pipe::{pick_screen, still, VideoSender};
 
 #[cfg(not(feature = "video"))]
-pub use stub::{pick_screen, show_remote, RemoteView, VideoSender};
+pub use stub::{pick_screen, show_remote, still, RemoteView, VideoSender};
+
+/// The first picture of a video file, upright, as RGBA.
+pub struct Still {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub stride: usize,
+    /// Microseconds; 0 when the container did not say.
+    pub duration: i64,
+}
 
 /// A remote video living in the corner of the window.
 ///
@@ -174,6 +184,13 @@ mod stub {
         Err(UNAVAILABLE.into())
     }
 
+    pub fn still(
+        _path: &std::path::Path,
+        _size: Option<(u32, u32)>,
+    ) -> Result<super::Still, String> {
+        Err(UNAVAILABLE.into())
+    }
+
     pub struct RemoteView(());
 
     pub fn show_remote(
@@ -211,6 +228,67 @@ mod pipe {
         static ONCE: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
         ONCE.get_or_init(|| gst::init().map_err(|e| e.to_string()))
             .clone()
+    }
+
+    /// Decodes the first picture of a (possibly partial) video file — on the
+    /// calling thread, which should not be the GTK one.
+    ///
+    /// A pipeline of our own rather than a `GtkMediaFile` read back: GTK's sink
+    /// takes only the frame formats it can show, and a 10-bit HEVC clip off a
+    /// phone's hardware decoder was not one of them, so every such clip came
+    /// out with no still. `videoflip` honours the rotation a phone writes in
+    /// the container, which GTK's sink ignores. `size` is the picture's
+    /// upright size to scale to, when known.
+    pub fn still(path: &std::path::Path, size: Option<(u32, u32)>) -> Result<super::Still, String> {
+        init()?;
+        let caps = match size {
+            Some((w, h)) => {
+                format!("video/x-raw,format=RGBA,width={w},height={h},pixel-aspect-ratio=1/1")
+            }
+            None => "video/x-raw,format=RGBA,pixel-aspect-ratio=1/1".to_string(),
+        };
+        let pipeline = gst::parse::launch(&format!(
+            "filesrc name=src ! decodebin ! videoflip video-direction=auto ! videoconvert \
+             ! videoscale ! {caps} ! appsink name=sink sync=false max-buffers=1"
+        ))
+        .map_err(|e| e.to_string())?
+        .downcast::<gst::Pipeline>()
+        .map_err(|_| "not a pipeline".to_string())?;
+        let stop = |p: &gst::Pipeline| {
+            let _ = p.set_state(gst::State::Null);
+        };
+        pipeline
+            .by_name("src")
+            .ok_or("no source")?
+            .set_property("location", path.to_string_lossy().as_ref());
+        let sink = pipeline
+            .by_name("sink")
+            .and_then(|s| s.downcast::<gst_app::AppSink>().ok())
+            .ok_or("no sink")?;
+        if pipeline.set_state(gst::State::Paused).is_err() {
+            stop(&pipeline);
+            return Err("the file would not open".into());
+        }
+        let sample = sink.try_pull_preroll(gst::ClockTime::from_seconds(10));
+        let duration = pipeline
+            .query_duration::<gst::ClockTime>()
+            .map(|d| d.useconds() as i64)
+            .unwrap_or(0);
+        stop(&pipeline);
+        let sample = sample.ok_or("no picture in the file")?;
+        let info = sample
+            .caps()
+            .and_then(|caps| gst_video::VideoInfo::from_caps(caps).ok())
+            .ok_or("no picture format")?;
+        let buffer = sample.buffer().ok_or("no picture")?;
+        let map = buffer.map_readable().map_err(|e| e.to_string())?;
+        Ok(super::Still {
+            pixels: map.as_slice().to_vec(),
+            width: info.width(),
+            height: info.height(),
+            stride: info.stride()[0] as usize,
+            duration,
+        })
     }
 
     /// A pipeline someone else's window is responsible for stopping.

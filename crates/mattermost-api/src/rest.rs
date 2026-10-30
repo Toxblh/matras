@@ -1375,10 +1375,22 @@ impl Client {
     /// and answers `206 Partial Content`; a proxy that strips the header
     /// falls back to the whole file, which still decodes, just costs more.
     pub async fn download_file_range(&self, file_id: &str, len: u64) -> Result<Vec<u8>> {
+        self.download_file_range_from(file_id, 0, len).await
+    }
+
+    /// Up to `len` bytes of a file from `start` — the end of an MP4 whose
+    /// index was written last, say.
+    pub async fn download_file_range_from(
+        &self,
+        file_id: &str,
+        start: u64,
+        len: u64,
+    ) -> Result<Vec<u8>> {
+        let end = start + len.saturating_sub(1);
         let resp = self
             .send(
                 self.request(Method::GET, &self.api(&format!("/files/{file_id}")))
-                    .header(RANGE, format!("bytes=0-{}", len.saturating_sub(1))),
+                    .header(RANGE, format!("bytes={start}-{end}")),
             )
             .await?;
         Ok(resp.bytes().await?.to_vec())

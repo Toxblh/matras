@@ -1214,33 +1214,48 @@ fn attachment(
         // both die with the row. Its Drop removes the temp file(s) it wrote.
         let player = Rc::new_cyclic(|weak: &std::rc::Weak<super::media::Player>| {
             let weak = weak.clone();
+            let mut known = super::media::StillInfo {
+                duration: avatars.poster_duration(&file.id),
+                ..Default::default()
+            };
             let poster = if super::media::is_audio(file) {
-                None
+                super::media::Poster::None
+            } else if let Some(texture) = avatars.poster(&file.id) {
+                // A still kept from before needs nothing else: the head is
+                // not asked for, so it cannot be fetched and evicted again.
+                super::media::Poster::Still(texture)
             } else {
-                avatars
-                    .poster(&file.id)
-                    .map(|texture| (texture.upcast(), std::path::PathBuf::new()))
-                    .or_else(|| {
-                        let head = avatars.video_head(&file.id)?;
-                        let still = super::media::video_still(file, head.as_slice());
-                        if still.is_none() {
-                            // Settled: this head will never make a still, so
-                            // it must not be fetched again either (see
-                            // `Avatars::no_still`).
-                            avatars.no_still(&file.id);
+                match avatars.take_video_head(&file.id) {
+                    None => super::media::Poster::None,
+                    Some(head) => {
+                        if let Some(geometry) = super::media::mp4_geometry(&head) {
+                            known = super::media::StillInfo {
+                                duration: known.duration,
+                                ..geometry
+                            };
                         }
-                        still
-                    })
+                        match super::media::video_still(file, head.as_slice()) {
+                            Some(path) => super::media::Poster::Head(path),
+                            None => {
+                                // Settled: this head will never make a still,
+                                // so it must not be fetched again either (see
+                                // `Avatars::no_still`).
+                                avatars.no_still(&file.id);
+                                super::media::Poster::None
+                            }
+                        }
+                    }
+                }
             };
             let keep = {
                 let avatars = avatars.clone();
                 let id = file.id.clone();
-                move |texture: Option<gtk::gdk::Texture>| match texture {
-                    Some(texture) => avatars.remember_poster(&id, texture),
+                move |still: Option<(gtk::gdk::Texture, super::media::StillInfo)>| match still {
+                    Some((texture, info)) => avatars.remember_poster(&id, texture, info.duration),
                     None => avatars.no_still(&id),
                 }
             };
-            super::media::Player::new(file, poster, keep, move |file_id| {
+            super::media::Player::new(file, poster, known, keep, move |file_id| {
                 let Some(player) = weak.upgrade() else { return };
                 let client = client.clone();
                 let resources = resources.clone();

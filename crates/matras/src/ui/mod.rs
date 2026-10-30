@@ -21,7 +21,7 @@ mod dialogs;
 mod interactive;
 mod lightbox;
 mod login;
-mod media;
+pub(crate) mod media;
 mod message;
 mod notify;
 mod profile;
@@ -821,7 +821,9 @@ pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
         if let Some(path) = std::env::var_os("MATRAS_DEMO_VIDEO_POSTER") {
             let file = gtk::gio::File::for_path(path);
             match gtk::gdk::Texture::from_file(&file) {
-                Ok(texture) => ui.avatars.remember_poster("f-demo-video", texture),
+                Ok(texture) => ui
+                    .avatars
+                    .remember_poster("f-demo-video", texture, 42_000_000),
                 Err(error) => tracing::warn!("could not load demo video poster: {error}"),
             }
         }
