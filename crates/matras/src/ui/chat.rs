@@ -729,28 +729,48 @@ impl ChatView {
             move |query| on_complete(query)
         }));
 
-        // Ctrl+V with an image on the clipboard attaches it. Pasting a
-        // screenshot is how most images get into a chat, and the alternative
-        // is saving it to disk first for no reason.
+        // Ctrl+V with an image or copied files on the clipboard attaches
+        // them. Pasting a screenshot is how most images get into a chat, and
+        // the alternative is saving it to disk first for no reason.
         let on_files = Rc::new(on_files);
         let paste = gtk::EventControllerKey::new();
+        // Capture, because the text view's own Ctrl+V binding would otherwise
+        // take the keystroke first and paste nothing.
+        paste.set_propagation_phase(gtk::PropagationPhase::Capture);
         paste.connect_key_pressed({
             let on_files = on_files.clone();
-            move |controller, key, _, modifier| {
-                let ctrl_v = key == gtk::gdk::Key::v
-                    && modifier.contains(gtk::gdk::ModifierType::CONTROL_MASK);
-                if !ctrl_v {
-                    return glib::Propagation::Proceed;
-                }
-                let Some(clipboard) = controller.widget().map(|w| w.clipboard()) else {
+            move |controller, key, keycode, modifier| {
+                let Some(widget) = controller.widget() else {
                     return glib::Propagation::Proceed;
                 };
-                // Only claim the keystroke when there really is an image;
-                // otherwise the text paste has to go through untouched.
-                if !clipboard
-                    .formats()
-                    .contains_type(gtk::gdk::Texture::static_type())
-                {
+                if !is_paste(&widget.display(), key, keycode, modifier) {
+                    return glib::Propagation::Proceed;
+                }
+                let clipboard = widget.clipboard();
+                let formats = clipboard.formats();
+                // Only claim the keystroke when there really is something to
+                // attach; otherwise the text paste has to go through untouched.
+                if formats.contains_type(gtk::gdk::FileList::static_type()) {
+                    let on_files = on_files.clone();
+                    clipboard.read_value_async(
+                        gtk::gdk::FileList::static_type(),
+                        glib::Priority::DEFAULT,
+                        gtk::gio::Cancellable::NONE,
+                        move |result| {
+                            let Ok(value) = result else { return };
+                            let Ok(list) = value.get::<gtk::gdk::FileList>() else {
+                                return;
+                            };
+                            let paths: Vec<_> =
+                                list.files().iter().filter_map(|f| f.path()).collect();
+                            if !paths.is_empty() {
+                                on_files(paths);
+                            }
+                        },
+                    );
+                    return glib::Propagation::Stop;
+                }
+                if !formats.contains_type(gtk::gdk::Texture::static_type()) {
                     return glib::Propagation::Proceed;
                 }
 
@@ -2067,6 +2087,28 @@ pub(super) fn build_composer_frame(entry: &gtk::TextView) -> gtk::Frame {
 
 /// The compact composer menu keeps attachment, scheduling, and priority
 /// available while letting the message field use almost all of a phone width.
+/// Ctrl+V on whatever layout is active. A Russian layout reports the V key as
+/// `Cyrillic_em`, so the key is also read as the first (Latin) layout gives it,
+/// which is what the toolkit's own shortcuts do.
+fn is_paste(
+    display: &gtk::gdk::Display,
+    key: gtk::gdk::Key,
+    keycode: u32,
+    modifier: gtk::gdk::ModifierType,
+) -> bool {
+    use gtk::gdk::{Key, ModifierType};
+    if !modifier.contains(ModifierType::CONTROL_MASK)
+        || modifier.intersects(ModifierType::SHIFT_MASK | ModifierType::ALT_MASK)
+    {
+        return false;
+    }
+    let is_v = |k: Key| matches!(k, Key::v | Key::V);
+    is_v(key)
+        || display
+            .translate_key(keycode, ModifierType::empty(), 0)
+            .is_some_and(|(k, ..)| is_v(k))
+}
+
 fn composer_options_menu(priority_menu: &gtk::gio::Menu) -> gtk::gio::Menu {
     let menu = gtk::gio::Menu::new();
     menu.append(Some("Attach File…"), Some("composer.attach"));
