@@ -118,6 +118,17 @@ impl Switcher {
             let pick = pick.clone();
             move |_, row| pick(row)
         });
+        // Enter in the entry is the entry's `activate`: GtkText takes the key
+        // before any controller on the entry hears it.
+        search.connect_activate({
+            let list = list.clone();
+            let pick = pick.clone();
+            move |_| {
+                if let Some(row) = list.selected_row() {
+                    pick(&row);
+                }
+            }
+        });
 
         let keys = gtk::EventControllerKey::new();
         keys.connect_key_pressed({
@@ -129,11 +140,6 @@ impl Switcher {
                 match key {
                     Key::Up | Key::KP_Up => step(&list, &scroller, &targets.borrow(), -1),
                     Key::Down | Key::KP_Down => step(&list, &scroller, &targets.borrow(), 1),
-                    Key::Return | Key::KP_Enter => {
-                        if let Some(row) = list.selected_row() {
-                            pick(&row);
-                        }
-                    }
                     Key::Escape => {
                         if let Some(window) = closing.upgrade() {
                             window.close();
@@ -171,6 +177,18 @@ impl Switcher {
         self.search.set_text(term);
     }
 
+    /// Enter, as the entry reports it. For the demo hook.
+    pub fn press_enter(&self) {
+        self.search.emit_activate();
+    }
+
+    /// A click on the row at `index`, as the row reports it. For the demo hook.
+    pub fn click_row(&self, index: i32) {
+        if let Some(row) = self.list.row_at_index(index) {
+            row.emit_activate();
+        }
+    }
+
     /// Replaces the results. The selection stays on the same target when it
     /// is still there — people arrive a moment after the channels, and the
     /// row someone had arrowed to must not jump back to the top under them.
@@ -188,6 +206,9 @@ impl Switcher {
             let row = adw::ActionRow::builder()
                 .title(glib::markup_escape_text(&item.title))
                 .subtitle(glib::markup_escape_text(&item.subtitle))
+                // An ActionRow is inert by default, and an inert row never
+                // emits `row-activated`: the click went nowhere.
+                .activatable(true)
                 .build();
             let prefix: gtk::Widget = match &item.icon {
                 Icon::Symbolic(name) => {

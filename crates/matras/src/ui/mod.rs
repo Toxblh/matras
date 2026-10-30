@@ -873,6 +873,16 @@ pub fn start_demo(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) {
         if !term.is_empty() {
             switcher.set_text(&term.to_string_lossy());
         }
+        // Then pick the first result, by Enter or by a click on it.
+        if let Some(how) = std::env::var_os("MATRAS_DEMO_QUICK_SWITCH_PICK") {
+            glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                if how == "click" {
+                    switcher.click_row(0);
+                } else {
+                    switcher.press_enter();
+                }
+            });
+        }
     }
     if std::env::var_os("MATRAS_DEMO_DIALOG").is_some() {
         interactive::present(window, &crate::demo::interactive_dialog(), |_| {}, || {});
